@@ -17,7 +17,7 @@
 #include<librealsense2/rsutil.h>
 #include <pcl/point_types.h>
 #include <pcl/visualization/pcl_visualizer.h>
-
+#include <pcl/io/ply_io.h>
 
 using namespace std;
 using namespace cv;
@@ -79,64 +79,64 @@ int main() try {
 
 
     // while (waitKey(1)) {
-        rs2::frameset data = pipe.wait_for_frames(); //等待下一帧
-        rs2::frameset aligned_frames = align.process(data);
+    rs2::frameset data = pipe.wait_for_frames(); //等待下一帧
+    rs2::frameset aligned_frames = align.process(data);
 
-        // rs2::frame depth = aligned_frames.get_depth_frame().apply_filter(color_map); //获取深度图，加颜色滤镜
-        rs2::depth_frame depth_frame = aligned_frames.get_depth_frame().as<rs2::depth_frame>();
-        rs2::video_frame color_frame = aligned_frames.get_color_frame().as<rs2::video_frame>();
+    // rs2::frame depth = aligned_frames.get_depth_frame().apply_filter(color_map); //获取深度图，加颜色滤镜
+    rs2::depth_frame depth_frame = aligned_frames.get_depth_frame().as<rs2::depth_frame>();
+    rs2::video_frame color_frame = aligned_frames.get_color_frame().as<rs2::video_frame>();
 
-        const int depth_w = depth_frame.get_width();
-        const int depth_h = depth_frame.get_height();
+    const int depth_w = depth_frame.get_width();
+    const int depth_h = depth_frame.get_height();
 
-        Mat depth_vis(Size(depth_w, depth_h),CV_16U, (void *) depth_frame.get_data(), Mat::AUTO_STEP);
-        Mat color_image(Size(color_frame.get_width(), color_frame.get_height()),CV_8UC3,
-                        (void *) color_frame.get_data(),
-                        Mat::AUTO_STEP);
-        imwrite("../depth_color.png", depth_vis);
-        imwrite("../color_image.png", color_image);
-        // imshow("depth_color", depth_vis);
-        // imshow("color_image", color_image);
+    Mat depth_vis(Size(depth_w, depth_h),CV_16U, (void *) depth_frame.get_data(), Mat::AUTO_STEP);
+    Mat color_image(Size(color_frame.get_width(), color_frame.get_height()),CV_8UC3,
+                    (void *) color_frame.get_data(),
+                    Mat::AUTO_STEP);
+    imwrite("../depth_color.png", depth_vis);
+    imwrite("../color_image.png", color_image);
+    // imshow("depth_color", depth_vis);
+    // imshow("color_image", color_image);
 
-        // PCL点云
-        pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
-        cloud->is_dense = false;
+    // PCL点云
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
+    cloud->is_dense = false;
 
-        for (int y = 0; y < depth_h; y++) {
-            for (int x = 0; x < depth_w; x++) {
-                float z = depth_frame.get_distance(x, y); // 单位米 SDK已处理depth_scale
-                if (z <= 0.f || !std::isfinite(z)) continue;
-                // uint16_t d = depth_frame.at<uint16_t>(y, x);
-                // if (d == 0) continue; // 无效深度
-                // float depth_m = d * depth_scale;
+    for (int y = 0; y < depth_h; y++) {
+        for (int x = 0; x < depth_w; x++) {
+            float z = depth_frame.get_distance(x, y); // 单位米 SDK已处理depth_scale
+            if (z <= 0.f || !std::isfinite(z)) continue;
+            // uint16_t d = depth_frame.at<uint16_t>(y, x);
+            // if (d == 0) continue; // 无效深度
+            // float depth_m = d * depth_scale;
 
-                // 反投影到相机坐标系
-                float pixel[2] = {static_cast<float>(x), static_cast<float>(y)};
-                float point[3];
-                rs2_deproject_pixel_to_point(point, &intrinsics, pixel, z);
+            // 反投影到相机坐标系
+            float pixel[2] = {static_cast<float>(x), static_cast<float>(y)};
+            float point[3];
+            rs2_deproject_pixel_to_point(point, &intrinsics, pixel, z);
 
-                pcl::PointXYZRGB p;
-                p.x = point[0];
-                p.y = point[1];
-                p.z = point[2];
-                // color_frame可能有stride，使用get_stride_in_bytes()
-                const uint8_t *cdata = reinterpret_cast<const uint8_t *>(color_frame.get_data());
-                int stride = color_frame.get_stride_in_bytes();//stride表示图像一行占用的字节数
-                int idx = y * stride + x * 3; // 每个像素占3个字节BGR
-                p.b = cdata[idx + 0];
-                p.g = cdata[idx + 1];
-                p.r = cdata[idx + 2];
-                cloud->push_back(p);
-            }
+            pcl::PointXYZRGB p;
+            p.x = point[0];
+            p.y = point[1];
+            p.z = point[2];
+            // color_frame可能有stride，使用get_stride_in_bytes()
+            const uint8_t *cdata = reinterpret_cast<const uint8_t *>(color_frame.get_data());
+            int stride = color_frame.get_stride_in_bytes(); //stride表示图像一行占用的字节数
+            int idx = y * stride + x * 3; // 每个像素占3个字节BGR
+            p.b = cdata[idx + 0];
+            p.g = cdata[idx + 1];
+            p.r = cdata[idx + 2];
+            cloud->push_back(p);
         }
+    }
 
-        pipe.stop();// 停止管道（单帧模式）
+    pipe.stop(); // 停止管道（单帧模式）
 
-        // 可视化（PCLVisualizer 在主线程 + XInitThreads 已调用）
-        pcl::visualization::PCLVisualizer viewer("Point Cloud");
-        viewer.addPointCloud<pcl::PointXYZRGB>(cloud, "cloud");
-
-        viewer.spin(); // 阻塞，直到窗口关闭
+    // 可视化（PCLVisualizer 在主线程 + XInitThreads 已调用）
+    // pcl::visualization::PCLVisualizer viewer("Point Cloud");
+    // viewer.addPointCloud<pcl::PointXYZRGB>(cloud, "cloud");
+    // viewer.spin(); // 阻塞，直到窗口关闭
+    pcl::io::savePLYFileBinary("../cloud.ply", *cloud);
 
     //     if (cv::waitKey(1) == 'q') {
     //         break;
