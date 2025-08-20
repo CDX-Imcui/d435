@@ -5,19 +5,26 @@
 
 #include <iostream>
 #include<stdlib.h>
-#include<stdio.h>
-#include<string>
+#include <string>
 #include <fstream>
 #include <algorithm>
 #include <sstream>
-#include<opencv2/imgproc/imgproc.hpp>
-#include<opencv2/core/core.hpp>
-#include<opencv2/highgui/highgui.hpp>
-#include<librealsense2/rs.hpp>
-#include<librealsense2/rsutil.h>
+#include <opencv2/imgproc/imgproc.hpp>
+#include <opencv2/core/core.hpp>
+#include <opencv2/highgui/highgui.hpp>
+#include <Eigen/Core>
+#include <opencv2/core/eigen.hpp>
+#include <opencv2/features2d.hpp>
+#include <opencv2/calib3d.hpp>
+#include <librealsense2/rs.hpp>
+#include <librealsense2/rsutil.h>
 #include <pcl/point_types.h>
 #include <pcl/visualization/pcl_visualizer.h>
 #include <pcl/io/ply_io.h>
+#include <pcl/filters/voxel_grid.h>
+#include <pcl/common/transforms.h>
+
+
 
 using namespace std;
 using namespace cv;
@@ -50,6 +57,127 @@ rs2_stream find_stream_to_align(const std::vector<rs2::stream_profile> &streams)
     return RS2_STREAM_DEPTH;
 }
 
+pcl::PointCloud<pcl::PointXYZRGB>::Ptr frame2PointCloud(const rs2::depth_frame &depth_frame,
+                                                        const rs2::video_frame &color_frame,
+                                                        const rs2_intrinsics &intrinsics) {
+    int width = depth_frame.get_width();
+    int height = depth_frame.get_height();
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
+    cloud->is_dense = false;
+
+    const uint8_t *cdata = reinterpret_cast<const uint8_t *>(color_frame.get_data());
+    int stride = color_frame.get_stride_in_bytes();
+
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            float z = depth_frame.get_distance(x, y);
+            if (z <= 0.f || !std::isfinite(z)) continue;
+
+            float pixel[2] = {float(x), float(y)};
+            float point[3];
+            rs2_deproject_pixel_to_point(point, &intrinsics, pixel, z);
+
+            pcl::PointXYZRGB p;
+            p.x = point[0];
+            p.y = point[1];
+            p.z = point[2];
+
+            int idx = y * stride + x * 3;
+            p.b = cdata[idx + 0];
+            p.g = cdata[idx + 1];
+            p.r = cdata[idx + 2];
+
+            cloud->push_back(p);
+        }
+    }
+    return cloud;
+}
+
+// 计算两帧位姿
+Mat computeFramePose(const Mat &prev_color, const Mat &prev_depth,
+                     const Mat &curr_color, const Mat &curr_depth,
+                     const rs2_intrinsics &intrinsics, const float &depth_scale) {
+    Ptr<ORB> orb = ORB::create(1000);
+    vector<KeyPoint> prev_kpts, curr_kpts;
+    Mat prev_desc, curr_desc;
+
+    orb->detectAndCompute(prev_color, noArray(), prev_kpts, prev_desc);
+    orb->detectAndCompute(curr_color, noArray(), curr_kpts, curr_desc);
+
+    BFMatcher matcher(NORM_HAMMING);
+    vector<DMatch> matches;
+    matcher.match(prev_desc, curr_desc, matches);
+
+    vector<Point3f> obj_pts;
+    vector<Point2f> img_pts;
+
+    for (auto &m: matches) {
+        int u = static_cast<int>(prev_kpts[m.queryIdx].pt.x);
+        int v = static_cast<int>(prev_kpts[m.queryIdx].pt.y);
+        uint16_t d = prev_depth.at<uint16_t>(v, u);
+        if (d == 0) continue;
+        float z = d * depth_scale; // mm->m
+        float x = (u - intrinsics.ppx) * z / intrinsics.fx;
+        float y = (v - intrinsics.ppy) * z / intrinsics.fy;
+        obj_pts.push_back(Point3f(x, y, z));
+        img_pts.push_back(curr_kpts[m.trainIdx].pt);
+    }
+
+    Mat rvec, tvec, inliers;
+    Mat T = Mat::eye(4, 4,CV_64F);
+    if (obj_pts.size() >= 6) {
+        Mat K = (Mat_<double>(3, 3) << intrinsics.fx, 0, intrinsics.ppx, 0, intrinsics.fy, intrinsics.ppy, 0, 0, 1);
+        solvePnPRansac(obj_pts, img_pts,
+                       K,
+                       noArray(), rvec, tvec, false, 100, 2.0, 0.99, inliers);
+        Mat R;
+        Rodrigues(rvec, R);
+        R.copyTo(T(Rect(0, 0, 3, 3)));
+        tvec.copyTo(T(Rect(3, 0, 1, 3)));
+    }
+    return T;
+}
+
+// 点云变换、融合、下采样
+pcl::PointCloud<pcl::PointXYZRGB>::Ptr fuse(
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr &total_cloud,
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr &current_cloud,
+    const Mat &T, float base_voxel_size = 0.005f) {
+    // 应用位姿变换
+    // 将 cv::Mat (4x4, double) 转成 Eigen::Matrix4f
+    Eigen::Matrix4f eigenT;
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
+            eigenT(i, j) = static_cast<float>(T.at<double>(i, j));
+        }
+    }
+
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr transformed(new pcl::PointCloud<pcl::PointXYZRGB>);
+    pcl::transformPointCloud(*current_cloud, *transformed, eigenT);
+
+    if (!total_cloud) total_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr(new pcl::PointCloud<pcl::PointXYZRGB>);
+    size_t prev_points = total_cloud->size();
+
+    // 融合
+    *total_cloud += *transformed;
+
+    // // 动态下采样
+    // float voxel_size = base_voxel_size;
+    // if (prev_points > 0) {
+    //     float factor = std::sqrt(static_cast<float>(total_cloud->size()) / prev_points);
+    //     voxel_size *= factor;
+    // }
+    // pcl::VoxelGrid<pcl::PointXYZRGB> vg;
+    // vg.setInputCloud(total_cloud);
+    // vg.setLeafSize(voxel_size, voxel_size, voxel_size);
+    // pcl::PointCloud<pcl::PointXYZRGB>::Ptr tmp(new pcl::PointCloud<pcl::PointXYZRGB>);
+    // vg.filter(*tmp);
+    // total_cloud = tmp;
+
+    return total_cloud;
+}
+
+
 int main() try {
     // 让 X11 支持多线程 在GUI PCL调用前
     XInitThreads();
@@ -78,70 +206,53 @@ int main() try {
     }
 
 
-    // while (waitKey(1)) {
-    rs2::frameset data = pipe.wait_for_frames(); //等待下一帧
-    rs2::frameset aligned_frames = align.process(data);
+    Mat prev_color, prev_depth;
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr total_cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
+    cv::Mat T_global = cv::Mat::eye(4, 4, CV_64F); // 全局位姿 单位矩阵
+    for (int i = 1; waitKey(3000) != 'q' && i <= 2; i++) {
+        // 每2秒获取一帧
+        rs2::frameset data = pipe.wait_for_frames(); //等待下一帧
+        rs2::frameset aligned_frames = align.process(data);
+        cout << "capture " << i << " frame" << endl;
 
-    // rs2::frame depth = aligned_frames.get_depth_frame().apply_filter(color_map); //获取深度图，加颜色滤镜
-    rs2::depth_frame depth_frame = aligned_frames.get_depth_frame().as<rs2::depth_frame>();
-    rs2::video_frame color_frame = aligned_frames.get_color_frame().as<rs2::video_frame>();
+        // rs2::frame depth = aligned_frames.get_depth_frame().apply_filter(color_map); //获取深度图，加颜色滤镜
+        rs2::depth_frame depth_frame = aligned_frames.get_depth_frame().as<rs2::depth_frame>();
+        rs2::video_frame color_frame = aligned_frames.get_color_frame().as<rs2::video_frame>();
 
-    const int depth_w = depth_frame.get_width();
-    const int depth_h = depth_frame.get_height();
+        Mat depth(Size(depth_frame.get_width(), depth_frame.get_height()),CV_16U, (void *) depth_frame.get_data(),
+                  Mat::AUTO_STEP);
+        Mat color(Size(color_frame.get_width(), color_frame.get_height()),CV_8UC3,
+                  (void *) color_frame.get_data(),
+                  Mat::AUTO_STEP);
+        imwrite(std::string("../depth_") + std::to_string(i) + ".png", depth);
+        imwrite(std::string("../color_") + std::to_string(i) + ".png", color);
+        // imshow("depth", depth);
+        // imshow("color", color);
 
-    Mat depth_vis(Size(depth_w, depth_h),CV_16U, (void *) depth_frame.get_data(), Mat::AUTO_STEP);
-    Mat color_image(Size(color_frame.get_width(), color_frame.get_height()),CV_8UC3,
-                    (void *) color_frame.get_data(),
-                    Mat::AUTO_STEP);
-    imwrite("../depth_color.png", depth_vis);
-    imwrite("../color_image.png", color_image);
-    // imshow("depth_color", depth_vis);
-    // imshow("color_image", color_image);
+        // PCL点云
+        pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud = frame2PointCloud(depth_frame, color_frame, intrinsics);
 
-    // PCL点云
-    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
-    cloud->is_dense = false;
+        if (!prev_color.empty()) {
+            //T_rel prev -> curr
+            Mat T_rel = computeFramePose(prev_color, prev_depth, color, depth, intrinsics, depth_scale);
 
-    for (int y = 0; y < depth_h; y++) {
-        for (int x = 0; x < depth_w; x++) {
-            float z = depth_frame.get_distance(x, y); // 单位米 SDK已处理depth_scale
-            if (z <= 0.f || !std::isfinite(z)) continue;
-            // uint16_t d = depth_frame.at<uint16_t>(y, x);
-            // if (d == 0) continue; // 无效深度
-            // float depth_m = d * depth_scale;
+            cv::Mat T_rel_inv = T_rel.inv(); // 逆矩阵 curr -> prev
 
-            // 反投影到相机坐标系
-            float pixel[2] = {static_cast<float>(x), static_cast<float>(y)};
-            float point[3];
-            rs2_deproject_pixel_to_point(point, &intrinsics, pixel, z);
-
-            pcl::PointXYZRGB p;
-            p.x = point[0];
-            p.y = point[1];
-            p.z = point[2];
-            // color_frame可能有stride，使用get_stride_in_bytes()
-            const uint8_t *cdata = reinterpret_cast<const uint8_t *>(color_frame.get_data());
-            int stride = color_frame.get_stride_in_bytes(); //stride表示图像一行占用的字节数
-            int idx = y * stride + x * 3; // 每个像素占3个字节BGR
-            p.b = cdata[idx + 0];
-            p.g = cdata[idx + 1];
-            p.r = cdata[idx + 2];
-            cloud->push_back(p);
+            T_global = T_global * T_rel_inv; // 累计全局位姿: curr -> world
+            total_cloud = fuse(total_cloud, cloud, T_global, 0.005f);
+        } else {
+            total_cloud = cloud;
         }
+        prev_color = color.clone();
+        prev_depth = depth.clone();
     }
-
     pipe.stop(); // 停止管道（单帧模式）
-
     // 可视化（PCLVisualizer 在主线程 + XInitThreads 已调用）
     // pcl::visualization::PCLVisualizer viewer("Point Cloud");
     // viewer.addPointCloud<pcl::PointXYZRGB>(cloud, "cloud");
     // viewer.spin(); // 阻塞，直到窗口关闭
-    pcl::io::savePLYFileBinary("../cloud.ply", *cloud);
+    pcl::io::savePLYFileBinary("../total_cloud.ply", *total_cloud);
 
-    //     if (cv::waitKey(1) == 'q') {
-    //         break;
-    //     }
-    // }
     return EXIT_SUCCESS;
 } catch (const rs2::error &e) {
     std::cout << "RealSense error calling " << e.get_failed_function() << "(" << e.get_failed_args() << "):\n"
