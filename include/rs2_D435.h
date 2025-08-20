@@ -57,6 +57,9 @@ public:
         return {depth, color};
     }
 
+    float getDepthScale() const {
+        return depth_scale;
+    }
 
     ~rs2_D435() {
         pipe.stop(); // 停止管道
@@ -107,12 +110,13 @@ public:
 
                 float pixel[2] = {float(x), float(y)};
                 float point[3];
+                //可以把rs2_deproject_pixel_to_point换成手写的SIMD向量化循环，或者用 OpenMP/TBB 对双重循环并行
                 rs2_deproject_pixel_to_point(point, &intrinsics, pixel, z);
 
                 pcl::PointXYZRGB p;
                 p.x = point[0];
-                p.y = point[1];
-                p.z = point[2];
+                p.y = -point[1];
+                p.z = -point[2];
 
                 int idx = y * stride + x * 3;
                 p.b = cdata[idx + 0];
@@ -126,19 +130,12 @@ public:
     }
 
     // 点云变换、融合、下采样
-    static void fuse(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &total_cloud, pcl::PointCloud<pcl::PointXYZRGB>::Ptr &current_cloud,
-                     const cv::Mat &T, float base_voxel_size = 0.005f) {
-        // 应用位姿变换
-        // 将 cv::Mat (4x4, double) 转成 Eigen::Matrix4f
-        Eigen::Matrix4f eigenT;
-        for (int i = 0; i < 4; i++) {
-            for (int j = 0; j < 4; j++) {
-                eigenT(i, j) = static_cast<float>(T.at<double>(i, j));
-            }
-        }
-
+    static void fuse(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &total_cloud,
+                     pcl::PointCloud<pcl::PointXYZRGB>::Ptr &current_cloud,
+                     const Eigen::Matrix4f &T, float base_voxel_size = 0.005f) {
         pcl::PointCloud<pcl::PointXYZRGB>::Ptr transformed(new pcl::PointCloud<pcl::PointXYZRGB>);
-        pcl::transformPointCloud(*current_cloud, *transformed, eigenT);
+        //transformPointCloud有一个copy_all_fields字段默认true，控制是否复制除x、y、z以外的其他字段（如颜色、强度等）到输出点云
+        pcl::transformPointCloud(*current_cloud, *transformed, T);
 
         if (!total_cloud) total_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr(new pcl::PointCloud<pcl::PointXYZRGB>);
         size_t prev_points = total_cloud->size();
@@ -160,7 +157,7 @@ public:
         // total_cloud = tmp;
     }
 
-    void print_intrinsics(const rs2_intrinsics &intrinsics) {
+    void print_intrinsics() {
         cout << "Intrinsics:" << endl;
         cout << "Width: " << intrinsics.width << endl;
         cout << "Height: " << intrinsics.height << endl;
@@ -175,7 +172,7 @@ private:
     rs2::pipeline pipe; //声明realsense管道
     rs2::config cfg; //数据流配置信息
     rs2::pipeline_profile profile; //管道配置文件
-    float depth_scale; //深度像素与长度单位（米）的关系
+    float depth_scale; //深度像素与长度单位（米）的关系  0.001
     rs2_stream align_to; // 对齐到的目标流
     rs2::align *align = nullptr; // 先用默认参数初始化 align 对象
     rs2_intrinsics intrinsics; // 内参
