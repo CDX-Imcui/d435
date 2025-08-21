@@ -98,14 +98,14 @@ public:
         int width = depth_frame.get_width();
         int height = depth_frame.get_height();
         pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
-        cloud->is_dense = false;
+        cloud->is_dense = false;//表明点云中可能包含无效点（如 NaN 或 Inf）
 
         const uint8_t *cdata = reinterpret_cast<const uint8_t *>(color_frame.get_data());
-        int stride = color_frame.get_stride_in_bytes();
+        int stride = color_frame.get_stride_in_bytes();//图一行的字节数；line width in memory in bytes (not the logical image width)
 
         for (int y = 0; y < height; ++y) {
             for (int x = 0; x < width; ++x) {
-                float z = depth_frame.get_distance(x, y);
+                float z = depth_frame.get_distance(x, y);//返回单位是米
                 if (z <= 0.f || !std::isfinite(z)) continue;
 
                 float pixel[2] = {float(x), float(y)};
@@ -118,7 +118,7 @@ public:
                 p.y = -point[1];
                 p.z = -point[2];
 
-                int idx = y * stride + x * 3;
+                int idx = y * stride + x * 3;//每个像素占3个字节BGR
                 p.b = cdata[idx + 0];
                 p.g = cdata[idx + 1];
                 p.r = cdata[idx + 2];
@@ -129,10 +129,11 @@ public:
         return cloud;
     }
 
-    // 点云变换、融合、下采样
+    // 点云从相机坐标系映射到世界坐标系变换、融合、下采样
     static void fuse(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &total_cloud,
                      pcl::PointCloud<pcl::PointXYZRGB>::Ptr &current_cloud,
-                     const Eigen::Matrix4f &T, float base_voxel_size = 0.005f) {
+                     const Eigen::Matrix4f &T, //从相机坐标系映射到世界坐标系的变换矩阵
+                     float base_voxel_size = 0.005f) {
         pcl::PointCloud<pcl::PointXYZRGB>::Ptr transformed(new pcl::PointCloud<pcl::PointXYZRGB>);
         //transformPointCloud有一个copy_all_fields字段默认true，控制是否复制除x、y、z以外的其他字段（如颜色、强度等）到输出点云
         pcl::transformPointCloud(*current_cloud, *transformed, T);

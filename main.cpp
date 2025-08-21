@@ -25,6 +25,8 @@
 #include <pcl/io/ply_io.h>
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/common/transforms.h>
+#include <thread>
+#include <chrono>
 
 #include "rs2_D435.h" // 自定义re2_D435相机类
 
@@ -52,25 +54,23 @@ int main() try {
     if (devices.size() == 1) {
         throw std::runtime_error("只有1个设备");
     }
+    // 序列号
+    std::string serial1 = "239722072145";//devices[0].get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
+    std::string serial2 ="239722073505";// devices[1].get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
 
-    // 获取序列号
-    std::string serial1 = devices[0].get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
-    std::string serial2 = devices[1].get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
-    cout << "Camera 1 Serial: " << serial1 << endl;
-    cout << "Camera 2 Serial: " << serial2 << endl;
-
-    rs2_D435 camera1(serial1, 640, 480, 30); //1280x720
-    Eigen::Matrix4f T1 = Eigen::Matrix4f::Identity();
+    rs2_D435 camera1(serial1, 640, 480, 30); //1280x720 外八
+    Eigen::Matrix4f T1 = Eigen::Matrix4f::Identity();//需要是从相机坐标系映射到世界坐标系的变换
     // 旋转轴（ux，uy，uz）是单位向量（0，-1，0）右手法则-45° x=ux⋅sin(θ/2),y=uy⋅sin(θ/2),z=uz⋅sin(θ/2),w=cos(θ/2)。四元数(w, x, y, z)表示任意旋转
-    T1.block<3,3>(0,0) = Eigen::Quaternionf(0.92388, 0.0f, 0.38268f, 0.0f).toRotationMatrix();
-    T1.block<3,1>(0,3) = Eigen::Vector3f(-0.1, 0, 0.1);//// 平移向量t（px, py, pz：相机原点在世界坐标系下的位置）
+    T1.block<3, 3>(0, 0) = Eigen::Quaternionf(0.92388, 0.0f, 0.38268f, 0.0f).toRotationMatrix();
+    // T1.block<3, 1>(0, 3) = Eigen::Vector3f(0.05, 0, -0.05); // 平移向量t
+    T1.block<3, 1>(0, 3) = Eigen::Vector3f(0.05, 0, -0.05); // 平移向量t
 
     rs2_D435 camera2(serial2, 640, 480, 30);
     Eigen::Matrix4f T2 = Eigen::Matrix4f::Identity();
-    T2.block<3,3>(0,0) = Eigen::Quaternionf(0.92388, 0.0f, -0.38268f, 0.0f).toRotationMatrix();//45°
-    T2.block<3,1>(0,3) = Eigen::Vector3f(0.1, 0, 0.1);
+    T2.block<3, 3>(0, 0) = Eigen::Quaternionf(0.92388, 0.0f, -0.38268f, 0.0f).toRotationMatrix(); //45°
+    T2.block<3, 1>(0, 3) = Eigen::Vector3f(-0.05, 0, -0.05);
 
-    pcl::PointCloud<pcl::PointXYZRGB>::Ptr world_cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
+    std::this_thread::sleep_for(std::chrono::seconds(3));// 阻塞三秒
 
     auto pair1 = camera1.get_frame();
     rs2::depth_frame depth1 = pair1.first;
@@ -84,10 +84,14 @@ int main() try {
     savePictures(serial2, depth2, color2);
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud2 = camera2.frame2PointCloud(depth2, color2);
 
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr world_cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
     rs2_D435::fuse(world_cloud, cloud1, T1, 0.005f);
     rs2_D435::fuse(world_cloud, cloud2, T2, 0.005f);
 
     pcl::io::savePLYFileBinary("../total_cloud.ply", *world_cloud);
+    std::cout << "points.size(): " << world_cloud->points.size()
+          << " width*height: " << world_cloud->width * world_cloud->height
+          << " width: " << world_cloud->width << " height: " << world_cloud->height << std::endl;
 
     return EXIT_SUCCESS;
 } catch (const rs2::error &e) {
