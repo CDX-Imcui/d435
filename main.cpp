@@ -51,26 +51,24 @@ int main() try {
     if (devices.size() == 0) {
         throw std::runtime_error("没设备");
     }
-    if (devices.size() == 1) {
-        throw std::runtime_error("只有1个设备");
-    }
+
     // 序列号
     std::string serial1 = "239722072145";//devices[0].get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
     std::string serial2 ="239722073505";// devices[1].get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
 
     rs2_D435 camera1(serial1, 640, 480, 30); //1280x720 外八
     Eigen::Matrix4f T1 = Eigen::Matrix4f::Identity();//需要是从相机坐标系映射到世界坐标系的变换
-    // 旋转轴（ux，uy，uz）是单位向量（0，-1，0）右手法则-45° x=ux⋅sin(θ/2),y=uy⋅sin(θ/2),z=uz⋅sin(θ/2),w=cos(θ/2)。四元数(w, x, y, z)表示任意旋转
-    T1.block<3, 3>(0, 0) = Eigen::Quaternionf(0.92388, 0.0f, 0.38268f, 0.0f).toRotationMatrix();
-    // T1.block<3, 1>(0, 3) = Eigen::Vector3f(0.05, 0, -0.05); // 平移向量t
-    T1.block<3, 1>(0, 3) = Eigen::Vector3f(0.05, 0, -0.05); // 平移向量t
+    // 旋转轴（ux，uy，uz）是单位向量（0，0，1）右手法则 45° x=ux⋅sin(θ/2),y=uy⋅sin(θ/2),z=uz⋅sin(θ/2),w=cos(θ/2)。四元数(w, x, y, z)表示任意旋转
+    T1.block<3, 3>(0, 0) = Eigen::Quaternionf(0.92388, 0.0f, 0.0f, 0.38268f).toRotationMatrix();
+    T1.block<3, 1>(0, 3) = Eigen::Vector3f(-0.05, -0.05, 0); // 平移向量t
 
     rs2_D435 camera2(serial2, 640, 480, 30);
     Eigen::Matrix4f T2 = Eigen::Matrix4f::Identity();
-    T2.block<3, 3>(0, 0) = Eigen::Quaternionf(0.92388, 0.0f, -0.38268f, 0.0f).toRotationMatrix(); //45°
-    T2.block<3, 1>(0, 3) = Eigen::Vector3f(-0.05, 0, -0.05);
+    T2.block<3, 3>(0, 0) = Eigen::Quaternionf(0.92388, 0.0f,0.0f, -0.38268f).toRotationMatrix(); //45°
+    T2.block<3, 1>(0, 3) = Eigen::Vector3f(-0.05, 0.05, 0);
 
     std::this_thread::sleep_for(std::chrono::seconds(3));// 阻塞三秒
+    auto start = std::chrono::high_resolution_clock::now();
 
     auto pair1 = camera1.get_frame();
     rs2::depth_frame depth1 = pair1.first;
@@ -85,8 +83,12 @@ int main() try {
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud2 = camera2.frame2PointCloud(depth2, color2);
 
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr world_cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
+    world_cloud->is_dense=false;
     rs2_D435::fuse(world_cloud, cloud1, T1, 0.005f);
     rs2_D435::fuse(world_cloud, cloud2, T2, 0.005f);
+
+    auto end = std::chrono::high_resolution_clock::now();
+    std::cout << "耗时: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << " ms" << std::endl;
 
     pcl::io::savePLYFileBinary("../total_cloud.ply", *world_cloud);
     std::cout << "points.size(): " << world_cloud->points.size()

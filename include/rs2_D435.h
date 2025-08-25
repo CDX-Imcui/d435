@@ -98,27 +98,29 @@ public:
         int width = depth_frame.get_width();
         int height = depth_frame.get_height();
         pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
-        cloud->is_dense = false;//表明点云中可能包含无效点（如 NaN 或 Inf）
+        cloud->is_dense = false; //表明点云中可能包含无效点（如 NaN 或 Inf）
 
         const uint8_t *cdata = reinterpret_cast<const uint8_t *>(color_frame.get_data());
-        int stride = color_frame.get_stride_in_bytes();//图一行的字节数；line width in memory in bytes (not the logical image width)
+        int stride = color_frame.get_stride_in_bytes();
+        //图一行的字节数；line width in memory in bytes (not the logical image width)
 
         for (int y = 0; y < height; ++y) {
             for (int x = 0; x < width; ++x) {
-                float z = depth_frame.get_distance(x, y);//返回单位是米
+                float z = depth_frame.get_distance(x, y); //返回单位是米
                 if (z <= 0.f || !std::isfinite(z)) continue;
 
                 float pixel[2] = {float(x), float(y)};
-                float point[3];
+                float point[3]; //point[0]：x  point[1]：y point[2]：z
                 //可以把rs2_deproject_pixel_to_point换成手写的SIMD向量化循环，或者用 OpenMP/TBB 对双重循环并行
-                rs2_deproject_pixel_to_point(point, &intrinsics, pixel, z);
+                rs2_deproject_pixel_to_point(point, &intrinsics, pixel, z); //像素坐标转相机坐标（x朝右，y朝下，z朝前）
 
-                pcl::PointXYZRGB p;
-                p.x = point[0];
-                p.y = -point[1];
-                p.z = -point[2];
+                pcl::PointXYZRGB p; //需要 x朝前(z)，y朝左(-x)，z朝上(-y)
+                //相机坐标系转换到机器人坐标系
+                p.x = point[2];
+                p.y = -point[0];
+                p.z = -point[1];
 
-                int idx = y * stride + x * 3;//每个像素占3个字节BGR
+                int idx = y * stride + x * 3; //每个像素占3个字节BGR
                 p.b = cdata[idx + 0];
                 p.g = cdata[idx + 1];
                 p.r = cdata[idx + 2];
@@ -126,7 +128,7 @@ public:
                 cloud->push_back(p);
             }
         }
-        return cloud;
+        return cloud;//机器人坐标系下的点云
     }
 
     // 点云从相机坐标系映射到世界坐标系变换、融合、下采样
