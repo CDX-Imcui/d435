@@ -1,7 +1,3 @@
-//
-// Created by YSC on 2025/8/20.
-//
-
 #ifndef D435_RS2_D435_H
 #define D435_RS2_D435_H
 #include <iostream>

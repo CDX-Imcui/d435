@@ -1,3 +1,4 @@
 /*.ply
 /cmake-build-release-wsl
+/build
 *.png

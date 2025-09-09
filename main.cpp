@@ -50,19 +50,17 @@ int main() try {
     auto devices = ctx.query_devices();
     if (devices.size() == 0) {
         throw std::runtime_error("没设备");
-    }
+    }//devices[0].get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);devices[1]。。。获取设备序列号
 
-    // 序列号
-    std::string serial1 = "239722072145";//devices[0].get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
-    std::string serial2 ="239722073505";// devices[1].get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);
 
-    rs2_D435 camera1(serial1, 640, 480, 30); //1280x720 外八
+    rs2_D435 camera1("239722073505", 640, 480, 30); //1280x720 外八
     Eigen::Matrix4f T1 = Eigen::Matrix4f::Identity();//需要是从相机坐标系映射到世界坐标系的变换
-    // 旋转轴（ux，uy，uz）是单位向量（0，0，1）右手法则 45° x=ux⋅sin(θ/2),y=uy⋅sin(θ/2),z=uz⋅sin(θ/2),w=cos(θ/2)。四元数(w, x, y, z)表示任意旋转
+    //四元数(w, x, y, z)表示任意旋转。融合点云时需要将所有的朝向左前方的相机，虽然右旋对应世界坐标系的朝前，但是点云应当左旋。
+    // 旋转轴（ux，uy，uz）是单位向量（0，0，1）右手法则 45° x=ux⋅sin(θ/2),y=uy⋅sin(θ/2),z=uz⋅sin(θ/2),w=cos(θ/2)。
     T1.block<3, 3>(0, 0) = Eigen::Quaternionf(0.92388, 0.0f, 0.0f, 0.38268f).toRotationMatrix();
     T1.block<3, 1>(0, 3) = Eigen::Vector3f(-0.05, -0.05, 0); // 平移向量t
 
-    rs2_D435 camera2(serial2, 640, 480, 30);
+    rs2_D435 camera2("239722072145", 640, 480, 30);
     Eigen::Matrix4f T2 = Eigen::Matrix4f::Identity();
     T2.block<3, 3>(0, 0) = Eigen::Quaternionf(0.92388, 0.0f,0.0f, -0.38268f).toRotationMatrix(); //45°
     T2.block<3, 1>(0, 3) = Eigen::Vector3f(-0.05, 0.05, 0);
@@ -73,13 +71,13 @@ int main() try {
     auto pair1 = camera1.get_frame();
     rs2::depth_frame depth1 = pair1.first;
     rs2::video_frame color1 = pair1.second;
-    savePictures(serial1, depth1, color1);
+    savePictures("1", depth1, color1);
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud1 = camera1.frame2PointCloud(depth1, color1);
 
     auto pair2 = camera2.get_frame();
     rs2::depth_frame depth2 = pair2.first;
     rs2::video_frame color2 = pair2.second;
-    savePictures(serial2, depth2, color2);
+    savePictures("2", depth2, color2);
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud2 = camera2.frame2PointCloud(depth2, color2);
 
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr world_cloud(new pcl::PointCloud<pcl::PointXYZRGB>);

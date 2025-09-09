@@ -1,0 +1,47 @@
+lsb_release -a
+uname -a
+
+apt安装报错，所以编译源码
+git clone -b v2.25.0 https://github.com/IntelRealSense/librealsense.git
+tar xvf librealsense-2.25.0.tar.gz
+cd librealsense-2.25.0
+# 安装依赖
+sudo apt-get update && sudo apt-get upgrade && sudo apt-get dist-upgrade
+sudo apt-get install libglfw3-dev libgl1-mesa-dev libglu1-mesa-dev
+
+# 从libalsense根目录运行Intel Realsense权限脚本
+./scripts/setup_udev_rules.sh
+# 编译安装
+mkdir build && cd build
+如果机器有 NVIDIA GPU，还可以考虑加 -DBUILD_WITH_CUDA=true 来启用 CUDA 加速。
+cmake ../ -DBUILD_EXAMPLES=true -DFORCE_RSUSB_BACKEND=true -DCMAKE_BUILD_TYPE=release -DBUILD_GRAPHICAL_EXAMPLES=FALSE -DBUILD_WITH_OPENMP=true
+# 内存大运行这个
+sudo make uninstall && make clean && make -j$(nproc) && sudo make install
+# 内存小运行这个
+sudo make uninstall && make clean && make && sudo make install
+验证安装是否成功
+cd librealsense/build/examples/C/depth/
+./rs-depth
+cd librealsense/build/examples/C/color/
+./rs-color
+sudo apt install -y build-essential cmake git pkg-config gdb libpcl-dev libopencv-dev
+
+# 下面是 apt 安装方式，
+sudo apt-get update && sudo apt-get -y upgrade
+sudo apt install -y build-essential cmake git pkg-config gdb libpcl-dev libopencv-dev
+
+sudo apt-get install -y --no-install-recommends python3-setuptools python3-pip python3-dev
+sudo apt-get install -y libssl-dev libusb-1.0-0-dev pkg-config libgtk-3-dev
+sudo apt-get install -y libglfw3-dev libgl1-mesa-dev libglu1-mesa-dev
+
+sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-key F6E65AC044F831AC80A06380C8B3A55A6F3EFCDE || sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-key F6E65AC044F831AC80A06380C8B3A55A6F3EFCDE
+sudo add-apt-repository "deb https://librealsense.intel.com/Debian/apt-repo $(lsb_release -cs) main" -u
+
+sudo apt-get install librealsense2-dkms
+sudo apt-get install librealsense2-utils
+sudo apt-get install librealsense2-dev           remove --purge
+
+realsense-viewer
+此时可以看到工具正常打开
+
+

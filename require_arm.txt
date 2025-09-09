@@ -1,0 +1,38 @@
+firefly@firefly:~$ cat /etc/apt/sources.list
+deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ focal main restricted universe multiverse
+deb-src https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ focal main restricted universe multiverse
+deb https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ focal-updates main restricted universe multiverse
+deb-src https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/ focal-updates main restricted universe multiverse
+
+
+
+
+# 下载源码
+git clone -b v2.25.0 https://github.com/IntelRealSense/librealsense.git
+# 进入源码目录
+cd librealsense
+# 安装依赖
+sudo apt-get update
+sudo apt-get install libglfw3-dev libgl1-mesa-dev libglu1-mesa-dev
+# 从libalsense根目录运行Intel Realsense权限脚本
+./scripts/setup_udev_rules.sh
+# 编译安装
+mkdir build && cd build
+如果机器有 NVIDIA GPU，还可以考虑加 -DBUILD_WITH_CUDA=true 来启用 CUDA 加速。
+cmake ../ -DBUILD_EXAMPLES=true -DFORCE_RSUSB_BACKEND=true -DCMAKE_BUILD_TYPE=release -DBUILD_GRAPHICAL_EXAMPLES=FALSE
+# 内存大运行这个
+sudo make uninstall && make clean && make -j$(nproc) && sudo make install
+# 内存小运行这个
+sudo make uninstall && make clean && make && sudo make install
+
+验证安装是否成功
+cd ~/librealsense/build/examples/C/depth/
+./rs-depth
+
+sudo apt install -y build-essential cmake git pkg-config gdb libpcl-dev libopencv-dev
+# for open pointcloud 读取 .ply 格式
+sudo apt install pcl-tools
+
+pcl_ply2pcd total_cloud.ply total_cloud.pcd
+pcl_viewer total_cloud.pcd
+
