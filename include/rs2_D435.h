@@ -1,29 +1,43 @@
 #ifndef D435_RS2_D435_H
 #define D435_RS2_D435_H
 #include <iostream>
-#include<stdlib.h>
 #include <string>
-#include <fstream>
 #include <algorithm>
-#include <sstream>
-#include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/core/core.hpp>
-#include <opencv2/highgui/highgui.hpp>
 #include <Eigen/Core>
-#include <opencv2/core/eigen.hpp>
-#include <opencv2/features2d.hpp>
-#include <opencv2/calib3d.hpp>
 #include <librealsense2/rs.hpp>
 #include <librealsense2/rsutil.h>
 #include <pcl/point_types.h>
 #include <pcl/visualization/pcl_visualizer.h>
-#include <pcl/io/ply_io.h>
-#include <pcl/filters/voxel_grid.h>
 #include <pcl/common/transforms.h>
+#include  "camera_extrinsic.h"
 
 class rs2_D435 {
 public:
-    explicit rs2_D435(const std::string &serial, int width = 640, int height = 480, int fps = 30) {
+    camera_extrinsic extrinsic;
+
+    explicit rs2_D435(const camera_extrinsic &camera_info) : extrinsic(camera_info) {
+
+        cfg.enable_device(camera_info.serial);
+        cfg.enable_stream(RS2_STREAM_DEPTH, camera_info.width, camera_info.height, RS2_FORMAT_Z16, camera_info.fps);
+        cfg.enable_stream(RS2_STREAM_COLOR, camera_info.width, camera_info.height, RS2_FORMAT_BGR8, camera_info.fps);
+        //开始传送数据流
+        profile = pipe.start(cfg);
+        depth_scale = get_depth_scale(profile.get_device()); //获取深度像素与长度单位的关系
+        align_to = find_stream_to_align(profile.get_streams());
+        align = new rs2::align(align_to);
+
+        if (align_to == RS2_STREAM_COLOR) {
+            auto color_sp = profile.get_stream(RS2_STREAM_COLOR).as<rs2::video_stream_profile>();
+            intrinsics = color_sp.get_intrinsics();
+        } else {
+            auto depth_sp = profile.get_stream(RS2_STREAM_DEPTH).as<rs2::video_stream_profile>();
+            intrinsics = depth_sp.get_intrinsics();
+        }
+    }
+
+    explicit rs2_D435(const std::string &serial, int width = 640, int height = 480, int fps = 30,
+                      const Eigen::Matrix4f& T = Eigen::Matrix4f::Identity()) : extrinsic(serial, width, height, fps, T) {
         cfg.enable_device(serial);
         cfg.enable_stream(RS2_STREAM_DEPTH, width, height, RS2_FORMAT_Z16, fps);
         cfg.enable_stream(RS2_STREAM_COLOR, width, height, RS2_FORMAT_BGR8, fps);
@@ -34,22 +48,22 @@ public:
         align = new rs2::align(align_to);
 
         if (align_to == RS2_STREAM_COLOR) {
-            rs2::video_stream_profile color_sp = profile.get_stream(RS2_STREAM_COLOR).as<rs2::video_stream_profile>();
+            auto color_sp = profile.get_stream(RS2_STREAM_COLOR).as<rs2::video_stream_profile>();
             intrinsics = color_sp.get_intrinsics();
         } else {
-            rs2::video_stream_profile depth_sp = profile.get_stream(RS2_STREAM_DEPTH).as<rs2::video_stream_profile>();
+            auto depth_sp = profile.get_stream(RS2_STREAM_DEPTH).as<rs2::video_stream_profile>();
             intrinsics = depth_sp.get_intrinsics();
         }
     }
 
-    std::pair<rs2::depth_frame, rs2::video_frame> get_frame() {
-        // rs2::colorizer color_map; //声明彩色图
-        // rs2::frame depth = aligned_frames.get_depth_frame().apply_filter(color_map); //获取深度图，加颜色滤镜
+    std::pair<rs2::depth_frame, rs2::video_frame> getFrame() {
+        // rs2::colorizer color_map;
+        // rs2::frame depth = aligned_frames.get_depth_frame().apply_filter(color_map); //对深度图加颜色滤镜
 
         rs2::frameset frames = pipe.wait_for_frames(); // 获取一帧
         rs2::frameset aligned_frames = align->process(frames); // 对齐到目标流
-        rs2::depth_frame depth = aligned_frames.get_depth_frame().as<rs2::depth_frame>();
-        rs2::video_frame color = aligned_frames.get_color_frame().as<rs2::video_frame>();
+        auto depth = aligned_frames.get_depth_frame().as<rs2::depth_frame>();
+        auto color = aligned_frames.get_color_frame().as<rs2::video_frame>();
         return {depth, color};
     }
 
@@ -67,7 +81,7 @@ public:
         //遍历每一个传感器
         for (rs2::sensor &sensor: dev.query_sensors()) {
             // 是深度传感器
-            if (rs2::depth_sensor dpt = sensor.as<rs2::depth_sensor>()) {
+            if (auto dpt = sensor.as<rs2::depth_sensor>()) {
                 return dpt.get_depth_scale();
             }
         }
@@ -111,7 +125,7 @@ public:
                 rs2_deproject_pixel_to_point(point, &intrinsics, pixel, z); //像素坐标转相机坐标（x朝右，y朝下，z朝前）
 
                 pcl::PointXYZRGB p; //需要 x朝前(z)，y朝左(-x)，z朝上(-y)
-                //相机坐标系转换到机器人坐标系
+                //纠正朝向——相机坐标系转换到机器人坐标系
                 p.x = point[2];
                 p.y = -point[0];
                 p.z = -point[1];
@@ -124,36 +138,20 @@ public:
                 cloud->push_back(p);
             }
         }
-        return cloud;//机器人坐标系下的点云
+        return cloud; //机器人坐标系下的点云
     }
 
-    // 点云从相机坐标系映射到世界坐标系变换、融合、下采样
+    // 点云从相机坐标系映射到世界坐标系变换、融合
     static void fuse(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &total_cloud,
                      pcl::PointCloud<pcl::PointXYZRGB>::Ptr &current_cloud,
-                     const Eigen::Matrix4f &T, //从相机坐标系映射到世界坐标系的变换矩阵
+                     const Eigen::Matrix4f &T, //变换矩阵
                      float base_voxel_size = 0.005f) {
         pcl::PointCloud<pcl::PointXYZRGB>::Ptr transformed(new pcl::PointCloud<pcl::PointXYZRGB>);
         //transformPointCloud有一个copy_all_fields字段默认true，控制是否复制除x、y、z以外的其他字段（如颜色、强度等）到输出点云
         pcl::transformPointCloud(*current_cloud, *transformed, T);
 
         if (!total_cloud) total_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr(new pcl::PointCloud<pcl::PointXYZRGB>);
-        size_t prev_points = total_cloud->size();
-
-        // 融合
         *total_cloud += *transformed;
-
-        // // 动态下采样
-        // float voxel_size = base_voxel_size;
-        // if (prev_points > 0) {
-        //     float factor = std::sqrt(static_cast<float>(total_cloud->size()) / prev_points);
-        //     voxel_size *= factor;
-        // }
-        // pcl::VoxelGrid<pcl::PointXYZRGB> vg;
-        // vg.setInputCloud(total_cloud);
-        // vg.setLeafSize(voxel_size, voxel_size, voxel_size);
-        // pcl::PointCloud<pcl::PointXYZRGB>::Ptr tmp(new pcl::PointCloud<pcl::PointXYZRGB>);
-        // vg.filter(*tmp);
-        // total_cloud = tmp;
     }
 
     void print_intrinsics() {

@@ -9,7 +9,7 @@ find_package(OpenCV REQUIRED)
 add_definitions(-DFORCE_RSUSB_BACKEND)
 add_definitions(-DBUILD_WITH_ROS2=OFF)
 find_package(realsense2 REQUIRED)
-#find_package(Threads REQUIRED)
+find_package(Threads REQUIRED)
 find_package(PCL REQUIRED COMPONENTS common io visualization)
 
 # 添加头文件目录
@@ -31,5 +31,6 @@ target_link_libraries(d435
         ${OpenCV_LIBS}
         ${realsense2_LIBRARY}
         ${PCL_LIBRARIES}
+        Threads::Threads
 )
 

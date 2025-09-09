@@ -1,23 +1,8 @@
-#include <X11/Xlib.h>              // 必须最先包含以便调用 XInitThreads()
-#ifdef Success
-#undef Success                    // 防止 X11 宏 Success 与 Eigen 枚举冲突
-#endif
-
 #include <iostream>
-#include<stdlib.h>
 #include <string>
 #include <fstream>
-#include <algorithm>
-#include <sstream>
-#include <opencv2/imgproc/imgproc.hpp>
-#include <opencv2/core/core.hpp>
-#include <opencv2/highgui/highgui.hpp>
 #include <Eigen/Core>
-#include <Eigen/Dense>
 #include <Eigen/Geometry>
-#include <opencv2/core/eigen.hpp>
-#include <opencv2/features2d.hpp>
-#include <opencv2/calib3d.hpp>
 #include <librealsense2/rs.hpp>
 #include <librealsense2/rsutil.h>
 #include <pcl/point_types.h>
@@ -27,71 +12,44 @@
 #include <pcl/common/transforms.h>
 #include <thread>
 #include <chrono>
-
-#include "rs2_D435.h" // 自定义re2_D435相机类
-
-using namespace std;
-using namespace cv;
-
-
-void savePictures(const std::string &serial, rs2::depth_frame depth, rs2::video_frame color) {
-    Mat img_depth1(Size(depth.get_width(), depth.get_height()),CV_16U, (void *) depth.get_data(), Mat::AUTO_STEP);
-    Mat img_color1(Size(color.get_width(), color.get_height()),CV_8UC3, (void *) color.get_data(), Mat::AUTO_STEP);
-    imwrite(std::string("../") + serial + "_depth.png", img_depth1);
-    imwrite(std::string("../") + serial + "_color.png", img_color1);
-}
-
+#include "camera_extrinsic.h"
+#include "multi_RGBD.h"
 
 int main() try {
-    // 让 X11 支持多线程 在GUI PCL调用前
-    XInitThreads();
-
     rs2::context ctx;
     auto devices = ctx.query_devices();
     if (devices.size() == 0) {
         throw std::runtime_error("没设备");
-    }//devices[0].get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);devices[1]。。。获取设备序列号
+    } //devices[0].get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);devices[1] 获取设备序列号
 
-
-    rs2_D435 camera1("239722073505", 640, 480, 30); //1280x720 外八
-    Eigen::Matrix4f T1 = Eigen::Matrix4f::Identity();//需要是从相机坐标系映射到世界坐标系的变换
-    //四元数(w, x, y, z)表示任意旋转。融合点云时需要将所有的朝向左前方的相机，虽然右旋对应世界坐标系的朝前，但是点云应当左旋。
+    Eigen::Matrix4f T1 = Eigen::Matrix4f::Identity(); //四元数(w, x, y, z)表示任意旋转。融合点云时需要将点云旋转，与相机回正方向相反
     // 旋转轴（ux，uy，uz）是单位向量（0，0，1）右手法则 45° x=ux⋅sin(θ/2),y=uy⋅sin(θ/2),z=uz⋅sin(θ/2),w=cos(θ/2)。
     T1.block<3, 3>(0, 0) = Eigen::Quaternionf(0.92388, 0.0f, 0.0f, 0.38268f).toRotationMatrix();
     T1.block<3, 1>(0, 3) = Eigen::Vector3f(-0.05, -0.05, 0); // 平移向量t
-
-    rs2_D435 camera2("239722072145", 640, 480, 30);
     Eigen::Matrix4f T2 = Eigen::Matrix4f::Identity();
-    T2.block<3, 3>(0, 0) = Eigen::Quaternionf(0.92388, 0.0f,0.0f, -0.38268f).toRotationMatrix(); //45°
+    T2.block<3, 3>(0, 0) = Eigen::Quaternionf(0.92388, 0.0f, 0.0f, -0.38268f).toRotationMatrix(); //45°
     T2.block<3, 1>(0, 3) = Eigen::Vector3f(-0.05, 0.05, 0);
+    // 外参
+    camera_extrinsic extrinsic1("239722073505", 640, 480, 30, T1),
+            extrinsic2("239722072145", 640, 480, 30, T2); //或者1280x720
 
-    std::this_thread::sleep_for(std::chrono::seconds(3));// 阻塞三秒
+    multi_RGBD multi_rgbd;
+    multi_rgbd.addCamera(extrinsic1);
+    // multi_rgbd.addCamera(extrinsic2);
+
+    std::this_thread::sleep_for(std::chrono::seconds(1));//等待硬件初始化
     auto start = std::chrono::high_resolution_clock::now();
 
-    auto pair1 = camera1.get_frame();
-    rs2::depth_frame depth1 = pair1.first;
-    rs2::video_frame color1 = pair1.second;
-    savePictures("1", depth1, color1);
-    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud1 = camera1.frame2PointCloud(depth1, color1);
-
-    auto pair2 = camera2.get_frame();
-    rs2::depth_frame depth2 = pair2.first;
-    rs2::video_frame color2 = pair2.second;
-    savePictures("2", depth2, color2);
-    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud2 = camera2.frame2PointCloud(depth2, color2);
-
-    pcl::PointCloud<pcl::PointXYZRGB>::Ptr world_cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
-    world_cloud->is_dense=false;
-    rs2_D435::fuse(world_cloud, cloud1, T1, 0.005f);
-    rs2_D435::fuse(world_cloud, cloud2, T2, 0.005f);
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr world_cloud = multi_rgbd.getPointCloud(0.005f);
 
     auto end = std::chrono::high_resolution_clock::now();
-    std::cout << "耗时: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << " ms" << std::endl;
+    std::cout << "耗时: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << " ms" <<
+            std::endl;
 
-    pcl::io::savePLYFileBinary("../total_cloud.ply", *world_cloud);
+    pcl::io::savePLYFileBinary("../world.ply", *world_cloud);
     std::cout << "points.size(): " << world_cloud->points.size()
-          << " width*height: " << world_cloud->width * world_cloud->height
-          << " width: " << world_cloud->width << " height: " << world_cloud->height << std::endl;
+            << " width*height: " << world_cloud->width * world_cloud->height
+            << " width: " << world_cloud->width << " height: " << world_cloud->height << std::endl;
 
     return EXIT_SUCCESS;
 } catch (const rs2::error &e) {

@@ -12,7 +12,7 @@ git clone -b v2.25.0 https://github.com/IntelRealSense/librealsense.git
 # 进入源码目录
 cd librealsense
 # 安装依赖
-sudo apt-get update
+sudo apt-get update && sudo apt-get upgrade
 sudo apt-get install libglfw3-dev libgl1-mesa-dev libglu1-mesa-dev
 # 从libalsense根目录运行Intel Realsense权限脚本
 ./scripts/setup_udev_rules.sh
