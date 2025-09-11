@@ -10,6 +10,7 @@
 #include <pcl/point_types.h>
 #include <pcl/visualization/pcl_visualizer.h>
 #include <pcl/common/transforms.h>
+#include <omp.h>
 #include  "camera_extrinsic.h"
 
 class rs2_D435 {
@@ -17,7 +18,6 @@ public:
     camera_extrinsic extrinsic;
 
     explicit rs2_D435(const camera_extrinsic &camera_info) : extrinsic(camera_info) {
-
         cfg.enable_device(camera_info.serial);
         cfg.enable_stream(RS2_STREAM_DEPTH, camera_info.width, camera_info.height, RS2_FORMAT_Z16, camera_info.fps);
         cfg.enable_stream(RS2_STREAM_COLOR, camera_info.width, camera_info.height, RS2_FORMAT_BGR8, camera_info.fps);
@@ -34,10 +34,12 @@ public:
             auto depth_sp = profile.get_stream(RS2_STREAM_DEPTH).as<rs2::video_stream_profile>();
             intrinsics = depth_sp.get_intrinsics();
         }
+        cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr(new pcl::PointCloud<pcl::PointXYZRGB>);
     }
 
     explicit rs2_D435(const std::string &serial, int width = 640, int height = 480, int fps = 30,
-                      const Eigen::Matrix4f& T = Eigen::Matrix4f::Identity()) : extrinsic(serial, width, height, fps, T) {
+                      const Eigen::Matrix4f &T = Eigen::Matrix4f::Identity()) : extrinsic(
+        serial, width, height, fps, T) {
         cfg.enable_device(serial);
         cfg.enable_stream(RS2_STREAM_DEPTH, width, height, RS2_FORMAT_Z16, fps);
         cfg.enable_stream(RS2_STREAM_COLOR, width, height, RS2_FORMAT_BGR8, fps);
@@ -54,6 +56,7 @@ public:
             auto depth_sp = profile.get_stream(RS2_STREAM_DEPTH).as<rs2::video_stream_profile>();
             intrinsics = depth_sp.get_intrinsics();
         }
+        cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr(new pcl::PointCloud<pcl::PointXYZRGB>);
     }
 
     std::pair<rs2::depth_frame, rs2::video_frame> getFrame() {
@@ -107,21 +110,24 @@ public:
                                                             const rs2::video_frame &color_frame) {
         int width = depth_frame.get_width();
         int height = depth_frame.get_height();
-        pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZRGB>);
+        cloud->clear(); //点数归零，但容量 (capacity) 不变
+        cloud->width = extrinsic.width;
+        cloud->height = extrinsic.height; //设置了 width height PCL 会把点云视为一个有序点云(相机图像结构)
+        cloud->resize(extrinsic.width * extrinsic.height);//points.size() 改成 n，并构造n个默认点
         cloud->is_dense = false; //表明点云中可能包含无效点（如 NaN 或 Inf）
 
-        const uint8_t *cdata = reinterpret_cast<const uint8_t *>(color_frame.get_data());
+        const auto *cdata = reinterpret_cast<const uint8_t *>(color_frame.get_data());
         int stride = color_frame.get_stride_in_bytes();
         //图一行的字节数；line width in memory in bytes (not the logical image width)
-
-        for (int y = 0; y < height; ++y) {
-            for (int x = 0; x < width; ++x) {
+        double start = omp_get_wtime();
+        // #pragma omp parallel for collapse(2) default(none) shared(width, height, depth_frame, intrinsics, cdata, stride, cloud)
+        for (int y = 0; y < height; y++) {
+            for (int x = 0; x < width; x++) {
                 float z = depth_frame.get_distance(x, y); //返回单位是米
                 if (z <= 0.f || !std::isfinite(z)) continue;
 
                 float pixel[2] = {float(x), float(y)};
                 float point[3]; //point[0]：x  point[1]：y point[2]：z
-                //可以把rs2_deproject_pixel_to_point换成手写的SIMD向量化循环，或者用 OpenMP/TBB 对双重循环并行
                 rs2_deproject_pixel_to_point(point, &intrinsics, pixel, z); //像素坐标转相机坐标（x朝右，y朝下，z朝前）
 
                 pcl::PointXYZRGB p; //需要 x朝前(z)，y朝左(-x)，z朝上(-y)
@@ -135,23 +141,23 @@ public:
                 p.g = cdata[idx + 1];
                 p.r = cdata[idx + 2];
 
-                cloud->push_back(p);
+                // cloud->push_back(p);
+                cloud->points[y * width + x] = p; //索引赋值，必须用 resize，否则越界
             }
         }
+        double end = omp_get_wtime();
+        // printf("openmp耗时: %f 毫秒\n", (end - start)*1000);
         return cloud; //机器人坐标系下的点云
     }
 
     // 点云从相机坐标系映射到世界坐标系变换、融合
-    static void fuse(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &total_cloud,
+    static void fuse(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &_world_cloud,
                      pcl::PointCloud<pcl::PointXYZRGB>::Ptr &current_cloud,
                      const Eigen::Matrix4f &T, //变换矩阵
                      float base_voxel_size = 0.005f) {
-        pcl::PointCloud<pcl::PointXYZRGB>::Ptr transformed(new pcl::PointCloud<pcl::PointXYZRGB>);
         //transformPointCloud有一个copy_all_fields字段默认true，控制是否复制除x、y、z以外的其他字段（如颜色、强度等）到输出点云
-        pcl::transformPointCloud(*current_cloud, *transformed, T);
-
-        if (!total_cloud) total_cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr(new pcl::PointCloud<pcl::PointXYZRGB>);
-        *total_cloud += *transformed;
+        pcl::transformPointCloud(*current_cloud, *current_cloud, T);
+        _world_cloud->insert(_world_cloud->end(), current_cloud->begin(), current_cloud->end());
     }
 
     void print_intrinsics() {
@@ -173,6 +179,9 @@ private:
     rs2_stream align_to; // 对齐到的目标流
     rs2::align *align = nullptr; // 先用默认参数初始化 align 对象
     rs2_intrinsics intrinsics; // 内参
+
+    pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud;
+
 };
 
 

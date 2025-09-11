@@ -11,6 +11,7 @@ add_definitions(-DBUILD_WITH_ROS2=OFF)
 find_package(realsense2 REQUIRED)
 find_package(Threads REQUIRED)
 find_package(PCL REQUIRED COMPONENTS common io visualization)
+find_package(OpenMP REQUIRED)
 
 # 添加头文件目录
 include_directories(
@@ -32,5 +33,6 @@ target_link_libraries(d435
         ${realsense2_LIBRARY}
         ${PCL_LIBRARIES}
         Threads::Threads
+        OpenMP::OpenMP_CXX
 )
 
