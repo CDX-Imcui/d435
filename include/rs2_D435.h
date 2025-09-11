@@ -17,47 +17,68 @@ class rs2_D435 {
 public:
     camera_extrinsic extrinsic;
 
-    explicit rs2_D435(const camera_extrinsic &camera_info) : extrinsic(camera_info) {
+    explicit rs2_D435(const camera_extrinsic &camera_info, bool haveColor = false) : extrinsic(camera_info) {
         cfg.enable_device(camera_info.serial);
         cfg.enable_stream(RS2_STREAM_DEPTH, camera_info.width, camera_info.height, RS2_FORMAT_Z16, camera_info.fps);
-        cfg.enable_stream(RS2_STREAM_COLOR, camera_info.width, camera_info.height, RS2_FORMAT_BGR8, camera_info.fps);
+        if (haveColor)
+            cfg.enable_stream(RS2_STREAM_COLOR, camera_info.width, camera_info.height, RS2_FORMAT_BGR8,
+                              camera_info.fps);
         //开始传送数据流
         profile = pipe.start(cfg);
         depth_scale = get_depth_scale(profile.get_device()); //获取深度像素与长度单位的关系
-        align_to = find_stream_to_align(profile.get_streams());
-        align = new rs2::align(align_to);
-
-        if (align_to == RS2_STREAM_COLOR) {
+        if (haveColor) {
+            align_to = find_stream_to_align(profile.get_streams());
+            align = new rs2::align(align_to);
             auto color_sp = profile.get_stream(RS2_STREAM_COLOR).as<rs2::video_stream_profile>();
             intrinsics = color_sp.get_intrinsics();
+            cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr(new pcl::PointCloud<pcl::PointXYZRGB>);
         } else {
             auto depth_sp = profile.get_stream(RS2_STREAM_DEPTH).as<rs2::video_stream_profile>();
             intrinsics = depth_sp.get_intrinsics();
+            cloudXYZ = pcl::PointCloud<pcl::PointXYZ>::Ptr(new pcl::PointCloud<pcl::PointXYZ>);
         }
-        cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr(new pcl::PointCloud<pcl::PointXYZRGB>);
     }
 
-    explicit rs2_D435(const std::string &serial, int width = 640, int height = 480, int fps = 30,
-                      const Eigen::Matrix4f &T = Eigen::Matrix4f::Identity()) : extrinsic(
-        serial, width, height, fps, T) {
-        cfg.enable_device(serial);
-        cfg.enable_stream(RS2_STREAM_DEPTH, width, height, RS2_FORMAT_Z16, fps);
-        cfg.enable_stream(RS2_STREAM_COLOR, width, height, RS2_FORMAT_BGR8, fps);
-        //开始传送数据流
-        profile = pipe.start(cfg);
-        depth_scale = get_depth_scale(profile.get_device()); //获取深度像素与长度单位的关系
-        align_to = find_stream_to_align(profile.get_streams());
-        align = new rs2::align(align_to);
+    pcl::PointCloud<pcl::PointXYZ>::Ptr frame2PointXYZCloud() {
+        frame = pipe.wait_for_frames(); // 获取一帧
+        auto depth_frame = frame.get_depth_frame().as<rs2::depth_frame>();
 
-        if (align_to == RS2_STREAM_COLOR) {
-            auto color_sp = profile.get_stream(RS2_STREAM_COLOR).as<rs2::video_stream_profile>();
-            intrinsics = color_sp.get_intrinsics();
-        } else {
-            auto depth_sp = profile.get_stream(RS2_STREAM_DEPTH).as<rs2::video_stream_profile>();
-            intrinsics = depth_sp.get_intrinsics();
+        int width = depth_frame.get_width();
+        int height = depth_frame.get_height();
+        cloudXYZ->clear(); //点数归零，但容量 (capacity) 不变
+        cloudXYZ->width = width;
+        cloudXYZ->height = height; //设置了 width height PCL 会把点云视为一个有序点云(相机图像结构)
+        cloudXYZ->resize(width * height); //points.size() 改成 n，并构造n个默认点
+        cloudXYZ->is_dense = false; //表明点云中可能包含无效点（如 NaN 或 Inf）
+
+        // auto start = std::chrono::high_resolution_clock::now();
+        // #pragma omp parallel for
+        for (int y = 0; y < height; y++) {
+            //行遍历——提高缓存命中率
+            for (int x = 0; x < width; x++) {
+                float z = depth_frame.get_distance(x, y); //返回单位是米
+                if (z <= 0.f || !std::isfinite(z)) continue;
+
+                float pixel[2] = {float(x), float(y)};
+                float point[3]; //point[0]：x  point[1]：y point[2]：z
+                rs2_deproject_pixel_to_point(point, &intrinsics, pixel, z); //像素坐标转相机坐标（x朝右，y朝下，z朝前）
+
+                pcl::PointXYZ p; //需要 x朝前(z)，y朝左(-x)，z朝上(-y)
+                //纠正朝向——相机坐标系转换到机器人坐标系
+                p.x = point[2];
+                p.y = -point[0];
+                p.z = -point[1];
+                // cloud->push_back(p);
+                cloudXYZ->points[y * width + x] = p; //索引赋值，必须用 resize，否则越界
+            }
         }
-        cloud = pcl::PointCloud<pcl::PointXYZRGB>::Ptr(new pcl::PointCloud<pcl::PointXYZRGB>);
+        // auto end= std::chrono::high_resolution_clock::now();
+        // std::cout << "openmp 耗时: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).
+        //         count() <<
+        //         " ms" << std::endl;
+        return cloudXYZ; //机器人坐标系下的点云
     }
+
 
     std::pair<rs2::depth_frame, rs2::video_frame> getFrame() {
         // rs2::colorizer color_map;
@@ -70,14 +91,6 @@ public:
         return {depth, color};
     }
 
-    float getDepthScale() const {
-        return depth_scale;
-    }
-
-    ~rs2_D435() {
-        pipe.stop(); // 停止管道
-        delete align; // 删除对齐对象
-    }
 
     //获取深度像素对应长度单位（米）的换算比例,返回比例因子
     static float get_depth_scale(const rs2::device &dev) {
@@ -111,17 +124,18 @@ public:
         int width = depth_frame.get_width();
         int height = depth_frame.get_height();
         cloud->clear(); //点数归零，但容量 (capacity) 不变
-        cloud->width = extrinsic.width;
-        cloud->height = extrinsic.height; //设置了 width height PCL 会把点云视为一个有序点云(相机图像结构)
-        cloud->resize(extrinsic.width * extrinsic.height);//points.size() 改成 n，并构造n个默认点
+        cloud->width = width;
+        cloud->height = height; //设置了 width height PCL 会把点云视为一个有序点云(相机图像结构)
+        cloud->resize(width * height); //points.size() 改成 n，并构造n个默认点
         cloud->is_dense = false; //表明点云中可能包含无效点（如 NaN 或 Inf）
 
         const auto *cdata = reinterpret_cast<const uint8_t *>(color_frame.get_data());
         int stride = color_frame.get_stride_in_bytes();
         //图一行的字节数；line width in memory in bytes (not the logical image width)
-        double start = omp_get_wtime();
-        // #pragma omp parallel for collapse(2) default(none) shared(width, height, depth_frame, intrinsics, cdata, stride, cloud)
+        // auto start = std::chrono::high_resolution_clock::now();
+        // #pragma omp parallel for
         for (int y = 0; y < height; y++) {
+            //行遍历——提高缓存命中率
             for (int x = 0; x < width; x++) {
                 float z = depth_frame.get_distance(x, y); //返回单位是米
                 if (z <= 0.f || !std::isfinite(z)) continue;
@@ -145,10 +159,13 @@ public:
                 cloud->points[y * width + x] = p; //索引赋值，必须用 resize，否则越界
             }
         }
-        double end = omp_get_wtime();
-        // printf("openmp耗时: %f 毫秒\n", (end - start)*1000);
+        // auto end= std::chrono::high_resolution_clock::now();
+        // std::cout << "openmp 耗时: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).
+        //         count() <<
+        //         " ms" << std::endl;
         return cloud; //机器人坐标系下的点云
     }
+
 
     // 点云从相机坐标系映射到世界坐标系变换、融合
     static void fuse(pcl::PointCloud<pcl::PointXYZRGB>::Ptr &_world_cloud,
@@ -156,7 +173,7 @@ public:
                      const Eigen::Matrix4f &T, //变换矩阵
                      float base_voxel_size = 0.005f) {
         //transformPointCloud有一个copy_all_fields字段默认true，控制是否复制除x、y、z以外的其他字段（如颜色、强度等）到输出点云
-        pcl::transformPointCloud(*current_cloud, *current_cloud, T);
+        pcl::transformPointCloud(*current_cloud, *current_cloud, T, false);
         _world_cloud->insert(_world_cloud->end(), current_cloud->begin(), current_cloud->end());
     }
 
@@ -171,6 +188,15 @@ public:
         cout << "Model: " << intrinsics.model << endl;
     }
 
+    float getDepthScale() const {
+        return depth_scale;
+    }
+
+    ~rs2_D435() {
+        pipe.stop(); // 停止管道
+        delete align; // 删除对齐对象
+    }
+
 private:
     rs2::pipeline pipe; //声明realsense管道
     rs2::config cfg; //数据流配置信息
@@ -181,7 +207,8 @@ private:
     rs2_intrinsics intrinsics; // 内参
 
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud;
-
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloudXYZ;
+    rs2::frameset frame;
 };
 
 

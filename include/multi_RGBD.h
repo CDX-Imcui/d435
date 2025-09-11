@@ -18,7 +18,7 @@
 class multi_RGBD {
 public:
     explicit multi_RGBD(int width = 640, int height = 480, const std::size_t cameras_size = 6) //TODO 暂时写死 线程池大小
-        : world_cloud(new pcl::PointCloud<pcl::PointXYZRGB>), pool_(cameras_size) {
+        : world_cloud(new pcl::PointCloud<pcl::PointXYZ>), pool_(cameras_size) {
         rs2::context ctx;
         auto devices = ctx.query_devices();
         if (devices.size() == 0) {
@@ -33,32 +33,30 @@ public:
 
     void addCamera(const camera_extrinsic &extrinsic) {
         // 不会在vector内部直接构造 rs2_D435 对象，性能提升不大
-        cameras.emplace_back(std::make_shared<rs2_D435>(extrinsic));
+        cameras.emplace_back(std::make_shared<rs2_D435>(extrinsic,false));
         // 如果是std::vector<rs2_D435>，存对象本身，emplace_back才能避免一次拷贝或移动
         this->extrinsic = extrinsic;
     }
 
-    pcl::PointCloud<pcl::PointXYZRGB>::Ptr getPointCloud(float base_voxel_size = 0.005f) {
+    pcl::PointCloud<pcl::PointXYZ>::Ptr getPointCloud(float base_voxel_size = 0.005f) {
         world_cloud->clear(); //点数归零，但容量不变
         world_cloud->is_dense = false;
         futures.clear();
         futures.reserve(cameras.size());
-
         for (int i = 0; i < cameras.size(); ++i) {
             futures.emplace_back(
-                pool_.enqueue([this, i]() -> pcl::PointCloud<pcl::PointXYZRGB>::Ptr {
-                    auto pair = cameras[i]->getFrame();
-                    auto current_cloud = cameras[i]->frame2PointCloud(pair.first, pair.second);
+                pool_.enqueue([this, i]() -> pcl::PointCloud<pcl::PointXYZ>::Ptr {
+                    auto current_cloud = cameras[i]->frame2PointXYZCloud();
                     // std::thread(
                     //     [serial = cameras[i]->extrinsic.serial, depth_frame = pair.first, video_frame = pair.second]() {
                     //         savePictures(serial, depth_frame, video_frame); //保存图片
                     //     }).detach();//pair.first是 rs2::frame 类型，不是Copyable的普通对象，是RealSenseSDK管理的资源句柄.按值拷贝进lambda才不会出现悬空问题
-
-                    pcl::transformPointCloud(*current_cloud, *current_cloud, cameras[i]->extrinsic.T);
+                    pcl::transformPointCloud(*current_cloud, *current_cloud, cameras[i]->extrinsic.T, false);
                     return current_cloud;
                 })
             );
         }
+
         for (auto &fut: futures) {
             auto cloud = fut.get(); //会阻塞直到对应任务完成，并返回结果
             world_cloud->insert(world_cloud->end(), cloud->begin(), cloud->end());
@@ -88,10 +86,10 @@ public:
 
 private:
     std::vector<std::shared_ptr<rs2_D435> > cameras;
-    pcl::PointCloud<pcl::PointXYZRGB>::Ptr world_cloud;
+    pcl::PointCloud<pcl::PointXYZ>::Ptr world_cloud;
     ThreadPool pool_; // 线程池
     camera_extrinsic extrinsic;
-    std::vector<std::future<pcl::PointCloud<pcl::PointXYZRGB>::Ptr> > futures;
+    std::vector<std::future<pcl::PointCloud<pcl::PointXYZ>::Ptr> > futures;
 
     static void savePictures(const std::string &serial, const rs2::depth_frame &depth, const rs2::video_frame &color) {
         cv::Mat img_depth1(cv::Size(depth.get_width(), depth.get_height()),CV_16U, (void *) depth.get_data(),

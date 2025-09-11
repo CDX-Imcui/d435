@@ -28,12 +28,12 @@ int main() try {
     T2.block<3, 1>(0, 3) = Eigen::Vector3f(-0.05, 0.05, 0);
     // 外参
     camera_extrinsic extrinsic1("239722073505", 640, 480, 60, T1),
-            extrinsic2("239722072145", 640, 480, 60, T2);
+            extrinsic2("239722072145", 640, 480, 30, T2);
 
     multi_RGBD multi_rgbd;
     multi_rgbd.addCamera(extrinsic1);
     // multi_rgbd.addCamera(extrinsic2);
-    pcl::PointCloud<pcl::PointXYZRGB>::Ptr world_cloud;
+    pcl::PointCloud<pcl::PointXYZ>::Ptr world_cloud;
 
     std::this_thread::sleep_for(std::chrono::seconds(1)); //等待硬件初始化
     auto start = std::chrono::high_resolution_clock::now();
