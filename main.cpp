@@ -27,8 +27,8 @@ int main() try {
     T2.block<3, 3>(0, 0) = Eigen::Quaternionf(0.92388, 0.0f, 0.0f, -0.38268f).toRotationMatrix(); //45°
     T2.block<3, 1>(0, 3) = Eigen::Vector3f(-0.05, 0.05, 0);
     // 外参
-    camera_extrinsic extrinsic1("239722073505", 640, 480, 60, T1),
-            extrinsic2("239722072145", 640, 480, 30, T2);
+    camera_extrinsic extrinsic1("239722073505", 640, 480, 90, T1),
+            extrinsic2("239722072145", 640, 480, 90, T2);
 
     multi_RGBD multi_rgbd;
     multi_rgbd.addCamera(extrinsic1);
@@ -38,13 +38,15 @@ int main() try {
     std::this_thread::sleep_for(std::chrono::seconds(1)); //等待硬件初始化
     auto start = std::chrono::high_resolution_clock::now();
 
-    for (int i = 1; i <= 100; ++i) {
+    int count = 100;
+    for (int i = 1; i <= count; ++i) {
         // std::cout << "\r采集 " << i << " 次" << std::flush;
         world_cloud = multi_rgbd.getPointCloud(0.005f);
     }
 
     auto end = std::chrono::high_resolution_clock::now();
-    std::cout << "耗时: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << " ms" <<
+    std::cout << "耗时: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() / static_cast<
+                double>(count) << " ms" <<
             std::endl;
 
     // pcl::visualization::PCLVisualizer viewer("Point Cloud");

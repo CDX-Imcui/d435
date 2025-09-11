@@ -11,6 +11,7 @@
 #include <pcl/visualization/pcl_visualizer.h>
 #include <pcl/common/transforms.h>
 #include <omp.h>
+#include <immintrin.h>
 #include  "camera_extrinsic.h"
 
 class rs2_D435 {
@@ -39,7 +40,7 @@ public:
         }
     }
 
-    pcl::PointCloud<pcl::PointXYZ>::Ptr frame2PointXYZCloud() {
+    pcl::PointCloud<pcl::PointXYZ>::Ptr getPointXYZCloud() {
         frame = pipe.wait_for_frames(); // 获取一帧
         auto depth_frame = frame.get_depth_frame().as<rs2::depth_frame>();
 
@@ -51,8 +52,6 @@ public:
         cloudXYZ->resize(width * height); //points.size() 改成 n，并构造n个默认点
         cloudXYZ->is_dense = false; //表明点云中可能包含无效点（如 NaN 或 Inf）
 
-        // auto start = std::chrono::high_resolution_clock::now();
-        // #pragma omp parallel for
         for (int y = 0; y < height; y++) {
             //行遍历——提高缓存命中率
             for (int x = 0; x < width; x++) {
@@ -72,10 +71,6 @@ public:
                 cloudXYZ->points[y * width + x] = p; //索引赋值，必须用 resize，否则越界
             }
         }
-        // auto end= std::chrono::high_resolution_clock::now();
-        // std::cout << "openmp 耗时: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).
-        //         count() <<
-        //         " ms" << std::endl;
         return cloudXYZ; //机器人坐标系下的点云
     }
 

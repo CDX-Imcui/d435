@@ -6,25 +6,36 @@
 #include <opencv2/core/core.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <pcl/point_types.h>
-#include <pcl/visualization/pcl_visualizer.h>
 #include <pcl/filters/voxel_grid.h>
-#include <thread>
+#include <pcl/point_cloud.h>
+#include <pcl/io/pcd_io.h>
+#include <cmath>
 #include <future>
 #include <pcl/common/transforms.h>
 #include "camera_extrinsic.h"
 #include "rs2_D435.h"// rs2_D435相机类
 #include "thread_pool.h"
 
+struct PolarPoint {
+    float r; // 半径
+    float theta; // 极角
+    float phi; // 方位角
+}
+        EIGEN_ALIGN16;
+
+POINT_CLOUD_REGISTER_POINT_STRUCT(PolarPoint, (float, r, r) (float, theta, theta) (float, phi, phi))
+
+
 class multi_RGBD {
-public:
-    explicit multi_RGBD(int width = 640, int height = 480, const std::size_t cameras_size = 6) //TODO 暂时写死 线程池大小
-        : world_cloud(new pcl::PointCloud<pcl::PointXYZ>), pool_(cameras_size) {
+public: //TODO 暂时写死 线程池大小
+    explicit multi_RGBD(int width = 640, int height = 480, const std::size_t cameras_size = 6) : pool_(cameras_size) {
         rs2::context ctx;
         auto devices = ctx.query_devices();
         if (devices.size() == 0) {
             throw std::runtime_error("没设备");
         } //devices[0].get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);devices[1] 获取设备序列号
 
+        world_cloud = pcl::PointCloud<pcl::PointXYZ>::Ptr(new pcl::PointCloud<pcl::PointXYZ>);
         //分配物理内存，points.size()是0
         world_cloud->reserve(world_cloud->width * world_cloud->height * cameras_size);
     };
@@ -33,7 +44,7 @@ public:
 
     void addCamera(const camera_extrinsic &extrinsic) {
         // 不会在vector内部直接构造 rs2_D435 对象，性能提升不大
-        cameras.emplace_back(std::make_shared<rs2_D435>(extrinsic,false));
+        cameras.emplace_back(std::make_shared<rs2_D435>(extrinsic, false));
         // 如果是std::vector<rs2_D435>，存对象本身，emplace_back才能避免一次拷贝或移动
         this->extrinsic = extrinsic;
     }
@@ -46,7 +57,7 @@ public:
         for (int i = 0; i < cameras.size(); ++i) {
             futures.emplace_back(
                 pool_.enqueue([this, i]() -> pcl::PointCloud<pcl::PointXYZ>::Ptr {
-                    auto current_cloud = cameras[i]->frame2PointXYZCloud();
+                    auto current_cloud = cameras[i]->getPointXYZCloud();
                     // std::thread(
                     //     [serial = cameras[i]->extrinsic.serial, depth_frame = pair.first, video_frame = pair.second]() {
                     //         savePictures(serial, depth_frame, video_frame); //保存图片
@@ -61,6 +72,30 @@ public:
             auto cloud = fut.get(); //会阻塞直到对应任务完成，并返回结果
             world_cloud->insert(world_cloud->end(), cloud->begin(), cloud->end());
         }
+
+        // TODO 转为极坐标
+        const pcl::PointCloud<PolarPoint>::Ptr polar_cloud(new pcl::PointCloud<PolarPoint>);
+        polar_cloud->resize(world_cloud->size());
+        polar_cloud->is_dense = false;
+
+        const auto* in  = world_cloud->points.data();
+        auto* out = polar_cloud->points.data();
+        const size_t n = world_cloud->size();
+
+        // #pragma omp parallel for num_threads(8)  schedule(static)
+        for (size_t i = 0; i < n; ++i) {
+            const auto& p = in[i];
+            out[i].r = std::sqrt(p.x * p.x + p.y * p.y + p.z * p.z);
+            if (out[i].r > 1e-6) {
+                out[i].theta = std::acos(p.z / out[i].r); // [0, π]
+            } else {
+                out[i].theta = 0.0f;
+            }
+            out[i].phi = std::atan2(p.y, p.x); // [-π, π]
+        }
+
+        // pcl::io::savePLYFileBinary("../spherical_cloud.ply", *cloud_spherical);
+
         return world_cloud;
     }
 
