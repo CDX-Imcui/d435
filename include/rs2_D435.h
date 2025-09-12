@@ -11,7 +11,6 @@
 #include <pcl/visualization/pcl_visualizer.h>
 #include <pcl/common/transforms.h>
 #include <omp.h>
-#include <immintrin.h>
 #include  "camera_extrinsic.h"
 
 class rs2_D435 {
@@ -37,6 +36,10 @@ public:
             auto depth_sp = profile.get_stream(RS2_STREAM_DEPTH).as<rs2::video_stream_profile>();
             intrinsics = depth_sp.get_intrinsics();
             cloudXYZ = pcl::PointCloud<pcl::PointXYZ>::Ptr(new pcl::PointCloud<pcl::PointXYZ>);
+            cloudXYZ->width  = camera_info.width;
+            cloudXYZ->height = camera_info.height;//设置了 width height PCL 会把点云视为一个有序点云(相机图像结构)
+            cloudXYZ->resize(camera_info.width * camera_info.height);//points.size() 改成 n，并构造n个默认点
+            cloudXYZ->is_dense = false;//表明点云中可能包含无效点（如 NaN 或 Inf）
         }
     }
 
@@ -46,11 +49,7 @@ public:
 
         int width = depth_frame.get_width();
         int height = depth_frame.get_height();
-        cloudXYZ->clear(); //点数归零，但容量 (capacity) 不变
-        cloudXYZ->width = width;
-        cloudXYZ->height = height; //设置了 width height PCL 会把点云视为一个有序点云(相机图像结构)
-        cloudXYZ->resize(width * height); //points.size() 改成 n，并构造n个默认点
-        cloudXYZ->is_dense = false; //表明点云中可能包含无效点（如 NaN 或 Inf）
+        auto * xyz= cloudXYZ->points.data();
 
         for (int y = 0; y < height; y++) {
             //行遍历——提高缓存命中率
@@ -68,7 +67,7 @@ public:
                 p.y = -point[0];
                 p.z = -point[1];
                 // cloud->push_back(p);
-                cloudXYZ->points[y * width + x] = p; //索引赋值，必须用 resize，否则越界
+                xyz[y * width + x] = p; //索引赋值，必须用 resize，否则越界
             }
         }
         return cloudXYZ; //机器人坐标系下的点云

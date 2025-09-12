@@ -57,7 +57,13 @@ int main() try {
     pcl::io::savePLYFileBinary("../world.ply", *world_cloud);
     std::cout << "points.size(): " << world_cloud->points.size() << std::endl;
 
-
+    // pcl::PCLPointCloud2 cloud2;
+    // pcl::toPCLPointCloud2(*world_cloud, cloud2);
+    // std::cout << "Fields in cloud: " << std::endl;
+    // for (const auto& field : cloud2.fields) {
+    //     std::cout << "  " << field.name << " ("
+    //               << pcl::getFieldType(field.datatype) << ")" << std::endl;
+    // }
     return 0;
 
     return EXIT_SUCCESS;

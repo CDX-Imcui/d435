@@ -5,18 +5,18 @@ set(CMAKE_BUILD_TYPE "Release")
 set(CMAKE_CXX_STANDARD 17)
 
 find_package(OpenCV REQUIRED)
-# 强制忽略 ROS2/DDS
-add_definitions(-DFORCE_RSUSB_BACKEND)
-add_definitions(-DBUILD_WITH_ROS2=OFF)
+
 find_package(realsense2 REQUIRED)
 find_package(Threads REQUIRED)
 find_package(PCL REQUIRED COMPONENTS common io visualization)
 find_package(OpenMP REQUIRED)
+find_package(OpenCL REQUIRED)
 
 # 添加头文件目录
 include_directories(
         ${OpenCV_INCLUDE_DIRS}
         ${PCL_INCLUDE_DIRS}
+        ${OpenCL_INCLUDE_DIRS}
         ${PROJECT_SOURCE_DIR}/include
 )
 file(GLOB_RECURSE HEADER_FILES
@@ -34,5 +34,6 @@ target_link_libraries(d435
         ${PCL_LIBRARIES}
         Threads::Threads
         OpenMP::OpenMP_CXX
+        ${OpenCL_LIBRARIES}
 )
 

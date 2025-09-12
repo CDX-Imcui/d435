@@ -37,6 +37,8 @@ public: //TODO 暂时写死 线程池大小
         world_cloud = pcl::PointCloud<pcl::PointXYZ>::Ptr(new pcl::PointCloud<pcl::PointXYZ>);
         world_cloud->reserve(width * height * cameras_size); //分配物理内存，points.size()是0
         polar_cloud = pcl::PointCloud<PolarPoint>::Ptr(new pcl::PointCloud<PolarPoint>);
+        polar_cloud->resize(width * height * cameras_size);
+        polar_cloud->is_dense = false;
     };
 
     ~multi_RGBD() = default;
@@ -49,6 +51,7 @@ public: //TODO 暂时写死 线程池大小
         if (extrinsic.width>width || extrinsic.height>height) {
             width = extrinsic.width; height = extrinsic.height;
             world_cloud->reserve(width * height * cameras.size());
+            polar_cloud->resize(width * height * cameras.size());
         }
     }
 
@@ -79,12 +82,9 @@ public: //TODO 暂时写死 线程池大小
         // TODO 转为极坐标
         const auto *in = world_cloud->points.data();
         const size_t n = world_cloud->size();
-        polar_cloud->clear();
-        polar_cloud->resize(n);
-        polar_cloud->is_dense = false;
         auto *out = polar_cloud->points.data();
 
-        // #pragma omp parallel for num_threads(8)  schedule(static)
+        // #pragma omp parallel for num_threads(2)// 开发板启用
         for (size_t i = 0; i < n; ++i) {
             const auto &p = in[i];
             out[i].r = std::sqrt(p.x * p.x + p.y * p.y + p.z * p.z);

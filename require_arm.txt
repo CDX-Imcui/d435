@@ -36,3 +36,6 @@ sudo apt install pcl-tools
 pcl_ply2pcd total_cloud.ply total_cloud.pcd
 pcl_viewer total_cloud.pcd
 
+使用openCL:
+sudo apt install opencl-headers ocl-icd-opencl-dev clinfo
+clinfo

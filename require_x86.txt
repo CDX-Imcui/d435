@@ -45,3 +45,28 @@ realsense-viewer
 此时可以看到工具正常打开
 
 
+WSL使用openCL:
+sudo apt install opencl-headers ocl-icd-opencl-dev clinfo
+clinfo
+lsb_release -a
+
+对于 Ubuntu 22.04 (Jammy Jellyfish):
+# 移除可能旧的或错误的列表文件（如果有）
+sudo rm -f /etc/apt/sources.list.d/intel-graphics.list
+# 下载并安装Intel的GPG密钥
+wget -qO - https://repositories.intel.com/graphics/intel-graphics.key | sudo gpg --dearmor --output /usr/share/keyrings/intel-graphics.gpg
+# 为Ubuntu 22.04 (Jammy)添加正确的软件源
+echo "deb [arch=amd64,i386 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/graphics/ubuntu jammy main" | sudo tee /etc/apt/sources.list.d/intel-graphics.list
+
+对于 Ubuntu 20.04 (Focal Fossa):
+# 移除可能旧的文件
+sudo rm -f /etc/apt/sources.list.d/intel-graphics.list
+# 下载并安装密钥
+wget -qO - https://repositories.intel.com/graphics/intel-graphics.key | sudo gpg --dearmor --output /usr/share/keyrings/intel-graphics.gpg
+# 为Ubuntu 20.04 (Focal)添加正确的软件源
+echo "deb [arch=amd64,i386 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/graphics/ubuntu focal main" | sudo tee /etc/apt/sources.list.d/intel-graphics.list
+
+
+sudo apt update # 更新软件包列表，获取Intel仓库的信息
+# 再次尝试安装所需的包
+sudo apt install -y intel-opencl-icd intel-level-zero-gpu level-zero
