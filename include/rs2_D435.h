@@ -61,13 +61,11 @@ public:
                 if (z <= 0.f || !std::isfinite(z)) {
                     p.x = p.y = p.z = nanv; // 明确标记无效点
                 } else {
-                    float pixel[2] = {float(x), float(y)};
-                    float point[3]; //point[0]：x  point[1]：y point[2]：z
-                    rs2_deproject_pixel_to_point(point, &intrinsics, pixel, z); //像素坐标转相机坐标（x朝右，y朝下，z朝前）
-                    //纠正朝向——相机坐标系转换到机器人坐标系
-                    p.x = point[2];
-                    p.y = -point[0];
-                    p.z = -point[1];
+                    // rs2_deproject_pixel_to_point(point, &intrinsics, pixel, z); //像素坐标转相机坐标（x朝右，y朝下，z朝前）
+                    //根据rs2_deproject_pixel_to_point intrinsics.model来看不做畸变下的坐标变换。在此直接手动计算
+                    p.x = z;//纠正朝向 机器人坐标系(x,y,z) <=> 相机坐标系(z,-x,-y)
+                    p.y = - z * (float(x) - intrinsics.ppx) / intrinsics.fx;
+                    p.z = - z * (float(y) - intrinsics.ppy) / intrinsics.fy;
                 }
                 xyz[y * width + x] = p; //pushback伪共享，用索引赋值，必须用 resize，否则越界
             }
