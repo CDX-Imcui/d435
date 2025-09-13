@@ -14,15 +14,7 @@
 #include "camera_extrinsic.h"
 #include "rs2_D435.h"// rs2_D435相机类
 #include "thread_pool.h"
-
-struct PolarPoint {
-    float r; // 半径
-    float theta; // 极角
-    float phi; // 方位角
-}
-        EIGEN_ALIGN16;
-
-POINT_CLOUD_REGISTER_POINT_STRUCT(PolarPoint, (float, r, r) (float, theta, theta) (float, phi, phi))
+#include "OpenCLConverter.h"
 
 
 class multi_RGBD {
@@ -33,7 +25,8 @@ public: //TODO 暂时写死 线程池大小
         if (devices.size() == 0) {
             throw std::runtime_error("没设备");
         } //devices[0].get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);devices[1] 获取设备序列号
-        width = 640;  height = 480;
+        width = 640;
+        height = 480;
         world_cloud = pcl::PointCloud<pcl::PointXYZ>::Ptr(new pcl::PointCloud<pcl::PointXYZ>);
         world_cloud->reserve(width * height * cameras_size); //分配物理内存，points.size()是0
         polar_cloud = pcl::PointCloud<PolarPoint>::Ptr(new pcl::PointCloud<PolarPoint>);
@@ -48,8 +41,9 @@ public: //TODO 暂时写死 线程池大小
         cameras.emplace_back(std::make_shared<rs2_D435>(extrinsic, false));
         // 如果是std::vector<rs2_D435>，存对象本身，emplace_back才能避免一次拷贝或移动
         this->extrinsic = extrinsic;
-        if (extrinsic.width>width || extrinsic.height>height) {
-            width = extrinsic.width; height = extrinsic.height;
+        if (extrinsic.width > width || extrinsic.height > height) {
+            width = extrinsic.width;
+            height = extrinsic.height;
             world_cloud->reserve(width * height * cameras.size());
             polar_cloud->resize(width * height * cameras.size());
         }
@@ -79,22 +73,30 @@ public: //TODO 暂时写死 线程池大小
             world_cloud->insert(world_cloud->end(), cloud->begin(), cloud->end());
         }
 
+        auto start = std::chrono::high_resolution_clock::now();
         // TODO 转为极坐标
-        const auto *in = world_cloud->points.data();
-        const size_t n = world_cloud->size();
-        auto *out = polar_cloud->points.data();
+        //GPU
+        opencl_converter_.convert(world_cloud, polar_cloud);
 
-        // #pragma omp parallel for num_threads(2)// 开发板启用
-        for (size_t i = 0; i < n; ++i) {
-            const auto &p = in[i];
-            out[i].r = std::sqrt(p.x * p.x + p.y * p.y + p.z * p.z);
-            if (out[i].r > 1e-6) {
-                out[i].theta = std::acos(p.z / out[i].r); // [0, π]
-            } else {
-                out[i].theta = 0.0f;
-            }
-            out[i].phi = std::atan2(p.y, p.x); // [-π, π]
-        }
+        // // CPU
+        // const auto *in = world_cloud->points.data();
+        // const size_t n = world_cloud->size();
+        // auto *out = polar_cloud->points.data();
+        // // #pragma omp parallel for num_threads(2)// 开发板启用
+        // for (size_t i = 0; i < n; ++i) {
+        //     const auto &p = in[i];
+        //     out[i].r = std::sqrt(p.x * p.x + p.y * p.y + p.z * p.z);
+        //     if (out[i].r > 1e-6) {
+        //         out[i].theta = std::acos(p.z / out[i].r); // [0, π]
+        //     } else {
+        //         out[i].theta = 0.0f;
+        //     }
+        //     out[i].phi = std::atan2(p.y, p.x); // [-π, π]
+        // }
+
+        auto end = std::chrono::high_resolution_clock::now();
+        double ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+        std::cout << "处理耗时: " << ms << " ms" << std::endl;
 
         // pcl::io::savePLYFileBinary("../spherical_cloud.ply", *cloud_spherical);
 
@@ -128,7 +130,8 @@ private:
     ThreadPool pool_; // 线程池
     camera_extrinsic extrinsic;
     std::vector<std::future<pcl::PointCloud<pcl::PointXYZ>::Ptr> > futures;
-    int width ,height;
+    int width, height;
+    OpenCLConverter opencl_converter_;
 
     static void savePictures(const std::string &serial, const rs2::depth_frame &depth, const rs2::video_frame &color) {
         cv::Mat img_depth1(cv::Size(depth.get_width(), depth.get_height()),CV_16U, (void *) depth.get_data(),
