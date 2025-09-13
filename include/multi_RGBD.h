@@ -57,13 +57,19 @@ public: //TODO 暂时写死 线程池大小
         for (int i = 0; i < cameras.size(); ++i) {
             futures.emplace_back(
                 pool_.enqueue([this, i]() -> pcl::PointCloud<pcl::PointXYZ>::Ptr {
-                    auto current_cloud = cameras[i]->getPointXYZCloud();
+                    auto start = std::chrono::high_resolution_clock::now();
+                    auto src = cameras[i]->getPointXYZCloud();
+                    auto end = std::chrono::high_resolution_clock::now();
+                    double ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+                    std::cout << "处理耗时: " << ms << " ms" << std::endl;
                     // std::thread(
                     //     [serial = cameras[i]->extrinsic.serial, depth_frame = pair.first, video_frame = pair.second]() {
                     //         savePictures(serial, depth_frame, video_frame); //保存图片
                     //     }).detach();//pair.first是 rs2::frame 类型，不是Copyable的普通对象，是RealSenseSDK管理的资源句柄.按值拷贝进lambda才不会出现悬空问题
-                    pcl::transformPointCloud(*current_cloud, *current_cloud, cameras[i]->extrinsic.T, false);
-                    return current_cloud;
+
+                    //返回的缓存区点云src 每次会被完全覆盖，变换不会累计，所以可以直接原地变换
+                    pcl::transformPointCloud(*src, *src, cameras[i]->extrinsic.T, false);
+                    return src;
                 })
             );
         }
@@ -73,7 +79,6 @@ public: //TODO 暂时写死 线程池大小
             world_cloud->insert(world_cloud->end(), cloud->begin(), cloud->end());
         }
 
-        auto start = std::chrono::high_resolution_clock::now();
         // TODO 转为极坐标
         //GPU
         opencl_converter_.convert(world_cloud, polar_cloud);
@@ -94,9 +99,6 @@ public: //TODO 暂时写死 线程池大小
         //     out[i].phi = std::atan2(p.y, p.x); // [-π, π]
         // }
 
-        auto end = std::chrono::high_resolution_clock::now();
-        double ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-        std::cout << "处理耗时: " << ms << " ms" << std::endl;
 
         // pcl::io::savePLYFileBinary("../spherical_cloud.ply", *cloud_spherical);
 

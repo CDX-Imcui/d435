@@ -36,10 +36,10 @@ public:
             auto depth_sp = profile.get_stream(RS2_STREAM_DEPTH).as<rs2::video_stream_profile>();
             intrinsics = depth_sp.get_intrinsics();
             cloudXYZ = pcl::PointCloud<pcl::PointXYZ>::Ptr(new pcl::PointCloud<pcl::PointXYZ>);
-            cloudXYZ->width  = camera_info.width;
-            cloudXYZ->height = camera_info.height;//设置了 width height PCL 会把点云视为一个有序点云(相机图像结构)
-            cloudXYZ->resize(camera_info.width * camera_info.height);//points.size() 改成 n，并构造n个默认点
-            cloudXYZ->is_dense = false;//表明点云中可能包含无效点（如 NaN 或 Inf）
+            cloudXYZ->width = camera_info.width;
+            cloudXYZ->height = camera_info.height; //设置了 width height PCL 会把点云视为一个有序点云(相机图像结构)
+            cloudXYZ->resize(camera_info.width * camera_info.height); //points.size() 改成 n，并构造n个默认点
+            cloudXYZ->is_dense = false; //表明点云中可能包含无效点（如 NaN 或 Inf）
         }
     }
 
@@ -49,25 +49,27 @@ public:
 
         int width = depth_frame.get_width();
         int height = depth_frame.get_height();
-        auto * xyz= cloudXYZ->points.data();
+        auto *xyz = cloudXYZ->points.data();
+        const float nanv = std::numeric_limits<float>::quiet_NaN();
 
         for (int y = 0; y < height; y++) {
             //行遍历——提高缓存命中率
             for (int x = 0; x < width; x++) {
                 float z = depth_frame.get_distance(x, y); //返回单位是米
-                if (z <= 0.f || !std::isfinite(z)) continue;
-
-                float pixel[2] = {float(x), float(y)};
-                float point[3]; //point[0]：x  point[1]：y point[2]：z
-                rs2_deproject_pixel_to_point(point, &intrinsics, pixel, z); //像素坐标转相机坐标（x朝右，y朝下，z朝前）
-
                 pcl::PointXYZ p; //需要 x朝前(z)，y朝左(-x)，z朝上(-y)
-                //纠正朝向——相机坐标系转换到机器人坐标系
-                p.x = point[2];
-                p.y = -point[0];
-                p.z = -point[1];
-                // cloud->push_back(p);
-                xyz[y * width + x] = p; //索引赋值，必须用 resize，否则越界
+
+                if (z <= 0.f || !std::isfinite(z)) {
+                    p.x = p.y = p.z = nanv; // 明确标记无效点
+                } else {
+                    float pixel[2] = {float(x), float(y)};
+                    float point[3]; //point[0]：x  point[1]：y point[2]：z
+                    rs2_deproject_pixel_to_point(point, &intrinsics, pixel, z); //像素坐标转相机坐标（x朝右，y朝下，z朝前）
+                    //纠正朝向——相机坐标系转换到机器人坐标系
+                    p.x = point[2];
+                    p.y = -point[0];
+                    p.z = -point[1];
+                }
+                xyz[y * width + x] = p; //pushback伪共享，用索引赋值，必须用 resize，否则越界
             }
         }
         return cloudXYZ; //机器人坐标系下的点云
