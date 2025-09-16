@@ -57,11 +57,11 @@ public: //TODO 暂时写死 线程池大小
         for (int i = 0; i < cameras.size(); ++i) {
             futures.emplace_back(
                 pool_.enqueue([this, i]() -> pcl::PointCloud<pcl::PointXYZ>::Ptr {
-                    auto start = std::chrono::high_resolution_clock::now();
+                    // auto start = std::chrono::high_resolution_clock::now();
                     auto src = cameras[i]->getPointXYZCloud();
-                    auto end = std::chrono::high_resolution_clock::now();
-                    double ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-                    std::cout << "处理耗时: " << ms << " ms" << std::endl;
+                    // auto end = std::chrono::high_resolution_clock::now();
+                    // double ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+                    // std::cout << "处理耗时: " << ms << " ms" << std::endl;
                     // std::thread(
                     //     [serial = cameras[i]->extrinsic.serial, depth_frame = pair.first, video_frame = pair.second]() {
                     //         savePictures(serial, depth_frame, video_frame); //保存图片
@@ -98,6 +98,7 @@ public: //TODO 暂时写死 线程池大小
         //     }
         //     out[i].phi = std::atan2(p.y, p.x); // [-π, π]
         // }
+        //
 
 
         // pcl::io::savePLYFileBinary("../spherical_cloud.ply", *cloud_spherical);

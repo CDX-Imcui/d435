@@ -8,10 +8,9 @@
 #include <librealsense2/rs.hpp>
 #include <librealsense2/rsutil.h>
 #include <pcl/point_types.h>
-#include <pcl/visualization/pcl_visualizer.h>
 #include <pcl/common/transforms.h>
-#include <omp.h>
-#include  "camera_extrinsic.h"
+#include "camera_extrinsic.h"
+#include "depth2point.h"
 
 class rs2_D435 {
 public:
@@ -45,31 +44,44 @@ public:
 
     pcl::PointCloud<pcl::PointXYZ>::Ptr getPointXYZCloud() {
         frame = pipe.wait_for_frames(); // 获取一帧
+        auto start = std::chrono::high_resolution_clock::now();
         auto depth_frame = frame.get_depth_frame().as<rs2::depth_frame>();
 
         int width = depth_frame.get_width();
         int height = depth_frame.get_height();
-        auto *xyz = cloudXYZ->points.data();
-        const float nanv = std::numeric_limits<float>::quiet_NaN();
 
-        for (int y = 0; y < height; y++) {
-            //行遍历——提高缓存命中率
-            for (int x = 0; x < width; x++) {
-                float z = depth_frame.get_distance(x, y); //返回单位是米
-                pcl::PointXYZ p; //需要 x朝前(z)，y朝左(-x)，z朝上(-y)
+        // 取出深度数据 (米)
+        // 直接取 Z16 原始深度数据
+        const uint16_t* raw = reinterpret_cast<const uint16_t*>(depth_frame.get_data());
+        // GPU: 内核里做 z = raw * depth_scale，并输出 16B 对齐到 PCL::PointXYZ
+        depth2point_gpu.DepthToPointCloudZ16(raw, width, height, intrinsics, depth_scale,
+                                             cloudXYZ->points.data());
+        auto end = std::chrono::high_resolution_clock::now();
 
-                if (z <= 0.f || !std::isfinite(z)) {
-                    p.x = p.y = p.z = nanv; // 明确标记无效点
-                } else {
-                    // rs2_deproject_pixel_to_point(point, &intrinsics, pixel, z); //像素坐标转相机坐标（x朝右，y朝下，z朝前）
-                    //根据rs2_deproject_pixel_to_point intrinsics.model来看不做畸变下的坐标变换。在此直接手动计算
-                    p.x = z;//纠正朝向 机器人坐标系(x,y,z) <=> 相机坐标系(z,-x,-y)
-                    p.y = - z * (float(x) - intrinsics.ppx) / intrinsics.fx;
-                    p.z = - z * (float(y) - intrinsics.ppy) / intrinsics.fy;
-                }
-                xyz[y * width + x] = p; //pushback伪共享，用索引赋值，必须用 resize，否则越界
-            }
-        }
+
+        // auto *xyz = cloudXYZ->points.data();
+        // const float nanv = std::numeric_limits<float>::quiet_NaN();
+        //
+        // for (int y = 0; y < height; y++) {
+        //     //行遍历——提高缓存命中率
+        //     for (int x = 0; x < width; x++) {
+        //         float z = depth_frame.get_distance(x, y); //返回单位是米
+        //         pcl::PointXYZ p; //需要 x朝前(z)，y朝左(-x)，z朝上(-y)
+        //
+        //         if (z <= 0.f || !std::isfinite(z)) {
+        //             p.x = p.y = p.z = nanv; // 明确标记无效点
+        //         } else {
+        //             // rs2_deproject_pixel_to_point(point, &intrinsics, pixel, z); //像素坐标转相机坐标（x朝右，y朝下，z朝前）
+        //             //根据rs2_deproject_pixel_to_point intrinsics.model来看不做畸变下的坐标变换。在此直接手动计算
+        //             p.x = z; //纠正朝向 机器人坐标系(x,y,z) <=> 相机坐标系(z,-x,-y)
+        //             p.y = -z * (float(x) - intrinsics.ppx) / intrinsics.fx;
+        //             p.z = -z * (float(y) - intrinsics.ppy) / intrinsics.fy;
+        //         }
+        //         xyz[y * width + x] = p; //pushback伪共享，用索引赋值，必须用 resize，否则越界
+        //     }
+        // }
+        double ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+        std::cout << "处理耗时: " << ms << " ms" << std::endl;
         return cloudXYZ; //机器人坐标系下的点云
     }
 
@@ -203,6 +215,8 @@ private:
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud;
     pcl::PointCloud<pcl::PointXYZ>::Ptr cloudXYZ;
     rs2::frameset frame;
+
+    depth2point depth2point_gpu;
 };
 
 
