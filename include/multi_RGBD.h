@@ -49,7 +49,7 @@ public: //TODO 暂时写死 线程池大小
         }
     }
 
-    pcl::PointCloud<pcl::PointXYZ>::Ptr getPointCloud(float base_voxel_size = 0.005f) {
+    pcl::PointCloud<PolarPoint>::Ptr getPointCloud(float base_voxel_size = 0.005f) {
         world_cloud->clear(); //点数归零，但容量不变
         world_cloud->is_dense = false;
         futures.clear();
@@ -103,7 +103,8 @@ public: //TODO 暂时写死 线程池大小
 
         // pcl::io::savePLYFileBinary("../spherical_cloud.ply", *cloud_spherical);
 
-        return world_cloud;
+        // return world_cloud;
+        return polar_cloud;
     }
 
     // // 融合、下采样

@@ -34,7 +34,7 @@ int main() try {
     multi_RGBD multi_rgbd;
     multi_rgbd.addCamera(extrinsic1);
     // multi_rgbd.addCamera(extrinsic2);
-    pcl::PointCloud<pcl::PointXYZ>::Ptr world_cloud;
+    pcl::PointCloud<PolarPoint>::Ptr world_cloud;
 
     std::this_thread::sleep_for(std::chrono::seconds(1)); //等待硬件初始化
     auto start = std::chrono::high_resolution_clock::now();

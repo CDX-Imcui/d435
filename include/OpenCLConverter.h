@@ -57,7 +57,7 @@ public:
 
         cl_int err = CL_SUCCESS;
         // 上传数据到 GPU。   使用阻塞写，当数据传输和计算可以重叠时，非阻塞 + event才有意义
-        err = clEnqueueWriteBuffer(queue_, bufIn_, CL_TRUE, 0, sizeof(pcl::PointXYZ) * N, in, 0, nullptr, nullptr);
+        err = clEnqueueWriteBuffer(queue_, bufIn_, CL_TRUE, 0, sizeof(cl_float4) * N, in, 0, nullptr, nullptr);
         if (err != CL_SUCCESS) throw std::runtime_error("clEnqueueWriteBuffer failed");
 
         // 设置内核参数
@@ -70,7 +70,13 @@ public:
         err = clEnqueueNDRangeKernel(queue_, kernel_, 1, nullptr, &globalSize,
                                      (preferredLocalSize_ > 0 ? &preferredLocalSize_ : nullptr), 0, nullptr, nullptr);
         if (err != CL_SUCCESS) throw std::runtime_error("clEnqueueNDRangeKernel failed");
-        // clFinish(queue_);
+
+        // 调整输出点云尺寸为实际 N
+        auto nonConst = const_cast<pcl::PointCloud<PolarPoint>*>(polar_cloud.get());
+        nonConst->points.resize(N);
+        nonConst->width  = static_cast<uint32_t>(N);
+        nonConst->height = 1;
+        nonConst->is_dense = false;
 
         // 下载结果到已有缓冲区
         err = clEnqueueReadBuffer(queue_, bufOut_, CL_TRUE, 0, sizeof(PolarPoint) * N, out, 0, nullptr, nullptr);
@@ -106,7 +112,7 @@ private:
     typedef struct { float r; float theta; float phi; } PolarPoint;
 
     __kernel void cartesian_to_spherical(
-        __global const PointXYZ* in,
+        __global const float4* in,
         __global PolarPoint* out,
         const int n)
     {
@@ -208,7 +214,7 @@ private:
         if (N <= capacity_) return;
         releaseBuffers();
         cl_int err;
-        bufIn_ = clCreateBuffer(context_, CL_MEM_READ_ONLY, sizeof(pcl::PointXYZ) * N, nullptr, &err);
+        bufIn_ = clCreateBuffer(context_, CL_MEM_READ_ONLY, sizeof(cl_float4) * N, nullptr, &err);
         checkCLError(err, "clCreateBuffer bufIn");
         bufOut_ = clCreateBuffer(context_, CL_MEM_WRITE_ONLY, sizeof(PolarPoint) * N, nullptr, &err);
         checkCLError(err, "clCreateBuffer bufOut");

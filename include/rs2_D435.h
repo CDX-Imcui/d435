@@ -44,7 +44,6 @@ public:
 
     pcl::PointCloud<pcl::PointXYZ>::Ptr getPointXYZCloud() {
         frame = pipe.wait_for_frames(); // 获取一帧
-        auto start = std::chrono::high_resolution_clock::now();
         auto depth_frame = frame.get_depth_frame().as<rs2::depth_frame>();
 
         int width = depth_frame.get_width();
@@ -56,8 +55,6 @@ public:
         // GPU: 内核里做 z = raw * depth_scale，并输出 16B 对齐到 PCL::PointXYZ
         depth2point_gpu.DepthToPointCloudZ16(raw, width, height, intrinsics, depth_scale,
                                              cloudXYZ->points.data());
-        auto end = std::chrono::high_resolution_clock::now();
-
 
         // auto *xyz = cloudXYZ->points.data();
         // const float nanv = std::numeric_limits<float>::quiet_NaN();
@@ -80,8 +77,6 @@ public:
         //         xyz[y * width + x] = p; //pushback伪共享，用索引赋值，必须用 resize，否则越界
         //     }
         // }
-        double ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-        std::cout << "处理耗时: " << ms << " ms" << std::endl;
         return cloudXYZ; //机器人坐标系下的点云
     }
 
