@@ -70,7 +70,7 @@ public:
         err = clEnqueueNDRangeKernel(queue_, kernel_, 1, nullptr, &globalSize,
                                      (preferredLocalSize_ > 0 ? &preferredLocalSize_ : nullptr), 0, nullptr, nullptr);
         if (err != CL_SUCCESS) throw std::runtime_error("clEnqueueNDRangeKernel failed");
-        clFinish(queue_);
+        // clFinish(queue_);
 
         // 下载结果到已有缓冲区
         err = clEnqueueReadBuffer(queue_, bufOut_, CL_TRUE, 0, sizeof(PolarPoint) * N, out, 0, nullptr, nullptr);
