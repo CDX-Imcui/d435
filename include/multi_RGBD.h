@@ -66,9 +66,6 @@ public: //TODO 暂时写死 线程池大小
                     //     [serial = cameras[i]->extrinsic.serial, depth_frame = pair.first, video_frame = pair.second]() {
                     //         savePictures(serial, depth_frame, video_frame); //保存图片
                     //     }).detach();//pair.first是 rs2::frame 类型，不是Copyable的普通对象，是RealSenseSDK管理的资源句柄.按值拷贝进lambda才不会出现悬空问题
-
-                    //返回的缓存区点云src 每次会被完全覆盖，变换不会累计，所以可以直接原地变换
-                    pcl::transformPointCloud(*src, *src, cameras[i]->extrinsic.T, false);
                     return src;
                 })
             );
@@ -79,7 +76,6 @@ public: //TODO 暂时写死 线程池大小
             world_cloud->insert(world_cloud->end(), cloud->begin(), cloud->end());
         }
 
-        // TODO 转为极坐标
         //GPU
         opencl_converter_.convert(world_cloud, polar_cloud);
 

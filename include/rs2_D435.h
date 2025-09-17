@@ -51,14 +51,13 @@ public:
 
         // 取出深度数据 (米)
         // 直接取 Z16 原始深度数据
-        const uint16_t* raw = reinterpret_cast<const uint16_t*>(depth_frame.get_data());
-        // GPU: 内核里做 z = raw * depth_scale，并输出 16B 对齐到 PCL::PointXYZ
-        depth2point_gpu.DepthToPointCloudZ16(raw, width, height, intrinsics, depth_scale,
-                                             cloudXYZ->points.data());
+        const uint16_t *raw = reinterpret_cast<const uint16_t *>(depth_frame.get_data());
+        depth2point_gpu.DepthToPointCloudZ16(raw, width, height, intrinsics, depth_scale,this->extrinsic.T.data(),cloudXYZ->points.data());
+        //返回的缓存区点云 每次会被完全覆盖，变换不会累计，所以可以直接原地变换
+        // pcl::transformPointCloud(*cloudXYZ, *cloudXYZ, this->extrinsic.T, false);
 
         // auto *xyz = cloudXYZ->points.data();
         // const float nanv = std::numeric_limits<float>::quiet_NaN();
-        //
         // for (int y = 0; y < height; y++) {
         //     //行遍历——提高缓存命中率
         //     for (int x = 0; x < width; x++) {
@@ -77,6 +76,7 @@ public:
         //         xyz[y * width + x] = p; //pushback伪共享，用索引赋值，必须用 resize，否则越界
         //     }
         // }
+
         return cloudXYZ; //机器人坐标系下的点云
     }
 
