@@ -1,9 +1,6 @@
 #ifndef D435_RS2_D435_H
 #define D435_RS2_D435_H
 #include <iostream>
-#include <string>
-#include <algorithm>
-#include <opencv2/core/core.hpp>
 #include <Eigen/Core>
 #include <librealsense2/rs.hpp>
 #include <librealsense2/rsutil.h>
@@ -11,7 +8,6 @@
 #include <pcl/common/transforms.h>
 #include "camera_extrinsic.h"
 #include "depth2point.h"
-#include "OpenCLConverter.h"
 #include "PolarPoint.h"
 
 class rs2_D435 {
@@ -36,13 +32,13 @@ public:
         } else {
             auto depth_sp = profile.get_stream(RS2_STREAM_DEPTH).as<rs2::video_stream_profile>();
             intrinsics = depth_sp.get_intrinsics();
-            cloudXYZ = pcl::PointCloud<pcl::PointXYZ>::Ptr(new pcl::PointCloud<pcl::PointXYZ>);
-            cloudXYZ->width = camera_info.width;
-            cloudXYZ->height = camera_info.height; //设置了 width height PCL 会把点云视为一个有序点云(相机图像结构)
-            cloudXYZ->resize(camera_info.width * camera_info.height); //points.size() 改成 n，并构造n个默认点
-            cloudXYZ->is_dense = false; //表明点云中可能包含无效点（如 NaN 或 Inf）
+            // cloudXYZ = pcl::PointCloud<pcl::PointXYZ>::Ptr(new pcl::PointCloud<pcl::PointXYZ>);
+            // cloudXYZ->width = camera_info.width;
+            // cloudXYZ->height = camera_info.height; //设置了 width height PCL 会把点云视为一个有序点云(相机图像结构)
+            // cloudXYZ->resize(camera_info.width * camera_info.height); //points.size() 改成 n，并构造n个默认点
+            // cloudXYZ->is_dense = false; //表明点云中可能包含无效点（如 NaN 或 Inf）
 
-            cloudPolar= pcl::PointCloud<PolarPoint>::Ptr(new pcl::PointCloud<PolarPoint>);
+            cloudPolar = pcl::PointCloud<PolarPoint>::Ptr(new pcl::PointCloud<PolarPoint>);
             cloudPolar->width = camera_info.width;
             cloudPolar->height = camera_info.height; //设置了 width height PCL 会把点云视为一个有序点云(相机图像结构)
             cloudPolar->resize(camera_info.width * camera_info.height); //points.size() 改成 n，并构造n个默认点
@@ -53,55 +49,33 @@ public:
     pcl::PointCloud<PolarPoint>::Ptr getPolarPointCloud() {
         frame = pipe.wait_for_frames(); // 获取一帧
         auto depth_frame = frame.get_depth_frame().as<rs2::depth_frame>();
-
-        int width = depth_frame.get_width();
-        int height = depth_frame.get_height();
-
-        // 取出深度数据 (米)
-        // 直接取 Z16 原始深度数据
+        // 直接取 Z16 原始深度数据 (米)
         const uint16_t *raw = reinterpret_cast<const uint16_t *>(depth_frame.get_data());
-        depth2point_gpu.DepthToPointCloudZ16(raw, width, height, intrinsics, depth_scale,this->extrinsic.T.data(),cloudXYZ->points.data());
-        opencl_converter_.convert(cloudXYZ, cloudPolar);
-        return cloudPolar; //机器人坐标系下的点云
+        depth2point_gpu.Depth2Polar(raw, depth_frame.get_width(), depth_frame.get_height(), intrinsics, depth_scale,
+                                    this->extrinsic.T.data(), cloudPolar->points.data());
+        return cloudPolar;
     }
 
-    pcl::PointCloud<pcl::PointXYZ>::Ptr getPointXYZCloud() {
-        frame = pipe.wait_for_frames(); // 获取一帧
-        auto depth_frame = frame.get_depth_frame().as<rs2::depth_frame>();
-
-        int width = depth_frame.get_width();
-        int height = depth_frame.get_height();
-
-        // 取出深度数据 (米)
-        // 直接取 Z16 原始深度数据
-        const uint16_t *raw = reinterpret_cast<const uint16_t *>(depth_frame.get_data());
-        depth2point_gpu.DepthToPointCloudZ16(raw, width, height, intrinsics, depth_scale,this->extrinsic.T.data(),cloudXYZ->points.data());
-        //返回的缓存区点云 每次会被完全覆盖，变换不会累计，所以可以直接原地变换
-        // pcl::transformPointCloud(*cloudXYZ, *cloudXYZ, this->extrinsic.T, false);
-
-        // auto *xyz = cloudXYZ->points.data();
-        // const float nanv = std::numeric_limits<float>::quiet_NaN();
-        // for (int y = 0; y < height; y++) {
-        //     //行遍历——提高缓存命中率
-        //     for (int x = 0; x < width; x++) {
-        //         float z = depth_frame.get_distance(x, y); //返回单位是米
-        //         pcl::PointXYZ p; //需要 x朝前(z)，y朝左(-x)，z朝上(-y)
-        //
-        //         if (z <= 0.f || !std::isfinite(z)) {
-        //             p.x = p.y = p.z = nanv; // 明确标记无效点
-        //         } else {
-        //             // rs2_deproject_pixel_to_point(point, &intrinsics, pixel, z); //像素坐标转相机坐标（x朝右，y朝下，z朝前）
-        //             //根据rs2_deproject_pixel_to_point intrinsics.model来看不做畸变下的坐标变换。在此直接手动计算
-        //             p.x = z; //纠正朝向 机器人坐标系(x,y,z) <=> 相机坐标系(z,-x,-y)
-        //             p.y = -z * (float(x) - intrinsics.ppx) / intrinsics.fx;
-        //             p.z = -z * (float(y) - intrinsics.ppy) / intrinsics.fy;
-        //         }
-        //         xyz[y * width + x] = p; //pushback伪共享，用索引赋值，必须用 resize，否则越界
-        //     }
-        // }
-
-        return cloudXYZ; //机器人坐标系下的点云
-    }
+    // auto *xyz = cloudXYZ->points.data();
+    // const float nanv = std::numeric_limits<float>::quiet_NaN();
+    // for (int y = 0; y < height; y++) {
+    //     //行遍历——提高缓存命中率
+    //     for (int x = 0; x < width; x++) {
+    //         float z = depth_frame.get_distance(x, y); //返回单位是米
+    //         pcl::PointXYZ p; //需要 x朝前(z)，y朝左(-x)，z朝上(-y)
+    //
+    //         if (z <= 0.f || !std::isfinite(z)) {
+    //             p.x = p.y = p.z = nanv; // 明确标记无效点
+    //         } else {
+    //             // rs2_deproject_pixel_to_point(point, &intrinsics, pixel, z); //像素坐标转相机坐标（x朝右，y朝下，z朝前）
+    //             //根据rs2_deproject_pixel_to_point intrinsics.model来看不做畸变下的坐标变换。在此直接手动计算
+    //             p.x = z; //纠正朝向 机器人坐标系(x,y,z) <=> 相机坐标系(z,-x,-y)
+    //             p.y = -z * (float(x) - intrinsics.ppx) / intrinsics.fx;
+    //             p.z = -z * (float(y) - intrinsics.ppy) / intrinsics.fy;
+    //         }
+    //         xyz[y * width + x] = p; //pushback伪共享，用索引赋值，必须用 resize，否则越界
+    //     }
+    // }
 
 
     std::pair<rs2::depth_frame, rs2::video_frame> getFrame() {
@@ -231,12 +205,11 @@ private:
     rs2_intrinsics intrinsics; // 内参
 
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud;
-    pcl::PointCloud<pcl::PointXYZ>::Ptr cloudXYZ;
+    // pcl::PointCloud<pcl::PointXYZ>::Ptr cloudXYZ;
     pcl::PointCloud<PolarPoint>::Ptr cloudPolar;
     rs2::frameset frame;
 
     depth2point depth2point_gpu;
-    OpenCLConverter opencl_converter_;
 };
 
 

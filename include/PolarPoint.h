@@ -3,14 +3,15 @@
 #include <pcl/register_point_struct.h> // 注册自定义点类型用
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
-struct PolarPoint {
+struct EIGEN_ALIGN16 PolarPoint {
     float r; // 半径
     float theta; // 极角
     float phi; // 方位角
-    inline PolarPoint() : r(0.f), theta(0.f), phi(0.f) {
+    float padding; // 填充字节，保持16字节对齐
+    inline PolarPoint() : r(0.f), theta(0.f), phi(0.f), padding(0.f) {
     }
 
-    inline PolarPoint(float _r, float _t, float _p) : r(_r), theta(_t), phi(_p) {
+    inline PolarPoint(float _r, float _t, float _p) : r(_r), theta(_t), phi(_p), padding(0.f) {
     }
 }; // 定义并注册 PolarPoint 为 PCL 点类型
 

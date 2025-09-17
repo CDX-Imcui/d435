@@ -5,7 +5,6 @@
 #include <Eigen/Geometry>
 #include <librealsense2/rs.hpp>
 #include <librealsense2/rsutil.h>
-#include <pcl/point_types.h>
 #include <pcl/visualization/pcl_visualizer.h>
 #include <pcl/io/ply_io.h>
 #include <pcl/filters/voxel_grid.h>

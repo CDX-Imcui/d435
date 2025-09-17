@@ -4,17 +4,13 @@
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/core/core.hpp>
 #include <opencv2/imgcodecs.hpp>
-#include <pcl/point_types.h>
-#include <pcl/filters/voxel_grid.h>
 #include <pcl/point_cloud.h>
 #include <pcl/io/pcd_io.h>
 #include <cmath>
 #include <future>
-#include <pcl/common/transforms.h>
 #include "camera_extrinsic.h"
 #include "rs2_D435.h"// rs2_D435相机类
 #include "thread_pool.h"
-#include "OpenCLConverter.h"
 #include "PolarPoint.h"
 
 class multi_RGBD {
@@ -29,9 +25,6 @@ public: //TODO 暂时写死 线程池大小
         height = 480;
         world_cloud = pcl::PointCloud<PolarPoint>::Ptr(new pcl::PointCloud<PolarPoint>);
         world_cloud->reserve(width * height * cameras_size); //分配物理内存，points.size()是0
-        polar_cloud = pcl::PointCloud<PolarPoint>::Ptr(new pcl::PointCloud<PolarPoint>);
-        polar_cloud->resize(width * height * cameras_size);
-        polar_cloud->is_dense = false;
     };
 
     ~multi_RGBD() = default;
@@ -45,7 +38,6 @@ public: //TODO 暂时写死 线程池大小
             width = extrinsic.width;
             height = extrinsic.height;
             world_cloud->reserve(width * height * cameras.size());
-            polar_cloud->resize(width * height * cameras.size());
         }
     }
 
@@ -58,7 +50,6 @@ public: //TODO 暂时写死 线程池大小
             futures.emplace_back(
                 pool_.enqueue([this, i]() -> pcl::PointCloud<PolarPoint>::Ptr {
                     // auto start = std::chrono::high_resolution_clock::now();
-                    // auto src = cameras[i]->getPointXYZCloud();
                     auto src = cameras[i]->getPolarPointCloud();
                     // auto end = std::chrono::high_resolution_clock::now();
                     // double ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
@@ -98,12 +89,10 @@ public: //TODO 暂时写死 线程池大小
 private:
     std::vector<std::shared_ptr<rs2_D435> > cameras;
     pcl::PointCloud<PolarPoint>::Ptr world_cloud;
-    pcl::PointCloud<PolarPoint>::Ptr polar_cloud;
     ThreadPool pool_; // 线程池
     camera_extrinsic extrinsic;
     std::vector<std::future<pcl::PointCloud<PolarPoint>::Ptr> > futures;
     int width, height;
-    OpenCLConverter opencl_converter_;
 
     static void savePictures(const std::string &serial, const rs2::depth_frame &depth, const rs2::video_frame &color) {
         cv::Mat img_depth1(cv::Size(depth.get_width(), depth.get_height()),CV_16U, (void *) depth.get_data(),
