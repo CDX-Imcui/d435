@@ -42,27 +42,37 @@ public: //TODO 暂时写死 线程池大小
     }
 
     pcl::PointCloud<PolarPoint>::Ptr getPointCloud(float base_voxel_size = 0.005f) {
-        world_cloud->clear(); //点数归零，但容量不变
+        const size_t C = cameras.size();
+        if (C == 0) return world_cloud;
+
+        // 计算每台相机点数与 prefix offsets
+        std::vector<size_t> offsets(C + 1, 0);
+        for (size_t i = 0; i < C; ++i)
+            offsets[i + 1] = offsets[i] + static_cast<size_t>(extrinsic.width) * static_cast<size_t>(extrinsic.height);
+
+        const size_t total = offsets[C];
+
+        // 预分配并设置有序/无序属性（拼接成 1 行）
+        world_cloud->is_dense = false;
+        world_cloud->width  = static_cast<uint32_t>(total);
+        world_cloud->height = 1;
+        world_cloud->resize(total); // 必须用 resize，使 points.size()==total
         world_cloud->is_dense = false;
         futures.clear();
-        futures.reserve(cameras.size());
-        for (int i = 0; i < cameras.size(); ++i) {
+        futures.reserve(C);
+        PolarPoint* base = world_cloud->points.data();
+        for (int i = 0; i < C; ++i) {
+            PolarPoint* dst = base + offsets[i];
             futures.emplace_back(
-                pool_.enqueue([this, i]() -> pcl::PointCloud<PolarPoint>::Ptr {
-                    // auto start = std::chrono::high_resolution_clock::now();
-                    auto src = cameras[i]->getPolarPointCloud();
-                    // auto end = std::chrono::high_resolution_clock::now();
-                    // double ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-                    // std::cout << "处理耗时: " << ms << " ms" << std::endl;
-                    return src;
+                pool_.enqueue([this, i,dst]() {
+                    cameras[i]->getPolarPointCloudInto(dst);
                 })
             );
         }
-
         for (auto &fut: futures) {
-            auto cloud = fut.get(); //会阻塞直到对应任务完成，并返回结果
-            world_cloud->insert(world_cloud->end(), cloud->begin(), cloud->end());
+            fut.get(); //会阻塞直到对应任务完成，并返回结果
         }
+
         return world_cloud;
     }
 
@@ -91,7 +101,7 @@ private:
     pcl::PointCloud<PolarPoint>::Ptr world_cloud;
     ThreadPool pool_; // 线程池
     camera_extrinsic extrinsic;
-    std::vector<std::future<pcl::PointCloud<PolarPoint>::Ptr> > futures;
+    std::vector<std::future<void>> futures;
     int width, height;
 
     static void savePictures(const std::string &serial, const rs2::depth_frame &depth, const rs2::video_frame &color) {

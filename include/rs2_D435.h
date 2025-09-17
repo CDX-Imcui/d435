@@ -38,22 +38,26 @@ public:
             // cloudXYZ->resize(camera_info.width * camera_info.height); //points.size() 改成 n，并构造n个默认点
             // cloudXYZ->is_dense = false; //表明点云中可能包含无效点（如 NaN 或 Inf）
 
-            cloudPolar = pcl::PointCloud<PolarPoint>::Ptr(new pcl::PointCloud<PolarPoint>);
-            cloudPolar->width = camera_info.width;
-            cloudPolar->height = camera_info.height; //设置了 width height PCL 会把点云视为一个有序点云(相机图像结构)
-            cloudPolar->resize(camera_info.width * camera_info.height); //points.size() 改成 n，并构造n个默认点
-            cloudPolar->is_dense = false; //表明点云中可能包含无效点（如 NaN 或 Inf）
+            // cloudPolar = pcl::PointCloud<PolarPoint>::Ptr(new pcl::PointCloud<PolarPoint>);
+            // cloudPolar->width = camera_info.width;
+            // cloudPolar->height = camera_info.height; //设置了 width height PCL 会把点云视为一个有序点云(相机图像结构)
+            // cloudPolar->resize(camera_info.width * camera_info.height); //points.size() 改成 n，并构造n个默认点
+            // cloudPolar->is_dense = false; //表明点云中可能包含无效点（如 NaN 或 Inf）
         }
     }
 
-    pcl::PointCloud<PolarPoint>::Ptr getPolarPointCloud() {
+    // 直接将本帧的极坐标点写入外部缓冲 dst
+    void getPolarPointCloudInto(PolarPoint *dst) {
         frame = pipe.wait_for_frames(); // 获取一帧
         auto depth_frame = frame.get_depth_frame().as<rs2::depth_frame>();
+
+        const int width = depth_frame.get_width();
+        const int height = depth_frame.get_height();
         // 直接取 Z16 原始深度数据 (米)
         const uint16_t *raw = reinterpret_cast<const uint16_t *>(depth_frame.get_data());
-        depth2point_gpu.Depth2Polar(raw, depth_frame.get_width(), depth_frame.get_height(), intrinsics, depth_scale,
-                                    this->extrinsic.T.data(), cloudPolar->points.data());
-        return cloudPolar;
+
+        depth2point_gpu.Depth2Polar(raw, width, height, intrinsics, depth_scale,
+                                    this->extrinsic.T.data(), dst); // 结果直接写到 dst
     }
 
     // auto *xyz = cloudXYZ->points.data();
@@ -206,7 +210,7 @@ private:
 
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud;
     // pcl::PointCloud<pcl::PointXYZ>::Ptr cloudXYZ;
-    pcl::PointCloud<PolarPoint>::Ptr cloudPolar;
+    // pcl::PointCloud<PolarPoint>::Ptr cloudPolar;
     rs2::frameset frame;
 
     depth2point depth2point_gpu;
