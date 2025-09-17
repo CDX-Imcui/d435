@@ -15,7 +15,7 @@
 #include "rs2_D435.h"// rs2_D435相机类
 #include "thread_pool.h"
 #include "OpenCLConverter.h"
-
+#include "PolarPoint.h"
 
 class multi_RGBD {
 public: //TODO 暂时写死 线程池大小
@@ -27,7 +27,7 @@ public: //TODO 暂时写死 线程池大小
         } //devices[0].get_info(RS2_CAMERA_INFO_SERIAL_NUMBER);devices[1] 获取设备序列号
         width = 640;
         height = 480;
-        world_cloud = pcl::PointCloud<pcl::PointXYZ>::Ptr(new pcl::PointCloud<pcl::PointXYZ>);
+        world_cloud = pcl::PointCloud<PolarPoint>::Ptr(new pcl::PointCloud<PolarPoint>);
         world_cloud->reserve(width * height * cameras_size); //分配物理内存，points.size()是0
         polar_cloud = pcl::PointCloud<PolarPoint>::Ptr(new pcl::PointCloud<PolarPoint>);
         polar_cloud->resize(width * height * cameras_size);
@@ -56,16 +56,13 @@ public: //TODO 暂时写死 线程池大小
         futures.reserve(cameras.size());
         for (int i = 0; i < cameras.size(); ++i) {
             futures.emplace_back(
-                pool_.enqueue([this, i]() -> pcl::PointCloud<pcl::PointXYZ>::Ptr {
+                pool_.enqueue([this, i]() -> pcl::PointCloud<PolarPoint>::Ptr {
                     // auto start = std::chrono::high_resolution_clock::now();
-                    auto src = cameras[i]->getPointXYZCloud();
+                    // auto src = cameras[i]->getPointXYZCloud();
+                    auto src = cameras[i]->getPolarPointCloud();
                     // auto end = std::chrono::high_resolution_clock::now();
                     // double ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
                     // std::cout << "处理耗时: " << ms << " ms" << std::endl;
-                    // std::thread(
-                    //     [serial = cameras[i]->extrinsic.serial, depth_frame = pair.first, video_frame = pair.second]() {
-                    //         savePictures(serial, depth_frame, video_frame); //保存图片
-                    //     }).detach();//pair.first是 rs2::frame 类型，不是Copyable的普通对象，是RealSenseSDK管理的资源句柄.按值拷贝进lambda才不会出现悬空问题
                     return src;
                 })
             );
@@ -75,32 +72,7 @@ public: //TODO 暂时写死 线程池大小
             auto cloud = fut.get(); //会阻塞直到对应任务完成，并返回结果
             world_cloud->insert(world_cloud->end(), cloud->begin(), cloud->end());
         }
-
-        //GPU
-        opencl_converter_.convert(world_cloud, polar_cloud);
-
-        // // CPU
-        // const auto *in = world_cloud->points.data();
-        // const size_t n = world_cloud->size();
-        // auto *out = polar_cloud->points.data();
-        // // #pragma omp parallel for num_threads(2)// 开发板启用
-        // for (size_t i = 0; i < n; ++i) {
-        //     const auto &p = in[i];
-        //     out[i].r = std::sqrt(p.x * p.x + p.y * p.y + p.z * p.z);
-        //     if (out[i].r > 1e-6) {
-        //         out[i].theta = std::acos(p.z / out[i].r); // [0, π]
-        //     } else {
-        //         out[i].theta = 0.0f;
-        //     }
-        //     out[i].phi = std::atan2(p.y, p.x); // [-π, π]
-        // }
-        //
-
-
-        // pcl::io::savePLYFileBinary("../spherical_cloud.ply", *cloud_spherical);
-
-        // return world_cloud;
-        return polar_cloud;
+        return world_cloud;
     }
 
     // // 融合、下采样
@@ -125,11 +97,11 @@ public: //TODO 暂时写死 线程池大小
 
 private:
     std::vector<std::shared_ptr<rs2_D435> > cameras;
-    pcl::PointCloud<pcl::PointXYZ>::Ptr world_cloud;
+    pcl::PointCloud<PolarPoint>::Ptr world_cloud;
     pcl::PointCloud<PolarPoint>::Ptr polar_cloud;
     ThreadPool pool_; // 线程池
     camera_extrinsic extrinsic;
-    std::vector<std::future<pcl::PointCloud<pcl::PointXYZ>::Ptr> > futures;
+    std::vector<std::future<pcl::PointCloud<PolarPoint>::Ptr> > futures;
     int width, height;
     OpenCLConverter opencl_converter_;
 

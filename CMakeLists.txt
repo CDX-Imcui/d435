@@ -26,6 +26,7 @@ file(GLOB_RECURSE HEADER_FILES
 add_executable(d435
         ${HEADER_FILES}
         main.cpp
+        include/PolarPoint.h
 )
 
 target_link_libraries(d435

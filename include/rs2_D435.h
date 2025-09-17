@@ -11,6 +11,8 @@
 #include <pcl/common/transforms.h>
 #include "camera_extrinsic.h"
 #include "depth2point.h"
+#include "OpenCLConverter.h"
+#include "PolarPoint.h"
 
 class rs2_D435 {
 public:
@@ -39,7 +41,28 @@ public:
             cloudXYZ->height = camera_info.height; //设置了 width height PCL 会把点云视为一个有序点云(相机图像结构)
             cloudXYZ->resize(camera_info.width * camera_info.height); //points.size() 改成 n，并构造n个默认点
             cloudXYZ->is_dense = false; //表明点云中可能包含无效点（如 NaN 或 Inf）
+
+            cloudPolar= pcl::PointCloud<PolarPoint>::Ptr(new pcl::PointCloud<PolarPoint>);
+            cloudPolar->width = camera_info.width;
+            cloudPolar->height = camera_info.height; //设置了 width height PCL 会把点云视为一个有序点云(相机图像结构)
+            cloudPolar->resize(camera_info.width * camera_info.height); //points.size() 改成 n，并构造n个默认点
+            cloudPolar->is_dense = false; //表明点云中可能包含无效点（如 NaN 或 Inf）
         }
+    }
+
+    pcl::PointCloud<PolarPoint>::Ptr getPolarPointCloud() {
+        frame = pipe.wait_for_frames(); // 获取一帧
+        auto depth_frame = frame.get_depth_frame().as<rs2::depth_frame>();
+
+        int width = depth_frame.get_width();
+        int height = depth_frame.get_height();
+
+        // 取出深度数据 (米)
+        // 直接取 Z16 原始深度数据
+        const uint16_t *raw = reinterpret_cast<const uint16_t *>(depth_frame.get_data());
+        depth2point_gpu.DepthToPointCloudZ16(raw, width, height, intrinsics, depth_scale,this->extrinsic.T.data(),cloudXYZ->points.data());
+        opencl_converter_.convert(cloudXYZ, cloudPolar);
+        return cloudPolar; //机器人坐标系下的点云
     }
 
     pcl::PointCloud<pcl::PointXYZ>::Ptr getPointXYZCloud() {
@@ -209,9 +232,11 @@ private:
 
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud;
     pcl::PointCloud<pcl::PointXYZ>::Ptr cloudXYZ;
+    pcl::PointCloud<PolarPoint>::Ptr cloudPolar;
     rs2::frameset frame;
 
     depth2point depth2point_gpu;
+    OpenCLConverter opencl_converter_;
 };
 
 
