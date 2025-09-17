@@ -32,17 +32,6 @@ public:
         } else {
             auto depth_sp = profile.get_stream(RS2_STREAM_DEPTH).as<rs2::video_stream_profile>();
             intrinsics = depth_sp.get_intrinsics();
-            // cloudXYZ = pcl::PointCloud<pcl::PointXYZ>::Ptr(new pcl::PointCloud<pcl::PointXYZ>);
-            // cloudXYZ->width = camera_info.width;
-            // cloudXYZ->height = camera_info.height; //设置了 width height PCL 会把点云视为一个有序点云(相机图像结构)
-            // cloudXYZ->resize(camera_info.width * camera_info.height); //points.size() 改成 n，并构造n个默认点
-            // cloudXYZ->is_dense = false; //表明点云中可能包含无效点（如 NaN 或 Inf）
-
-            // cloudPolar = pcl::PointCloud<PolarPoint>::Ptr(new pcl::PointCloud<PolarPoint>);
-            // cloudPolar->width = camera_info.width;
-            // cloudPolar->height = camera_info.height; //设置了 width height PCL 会把点云视为一个有序点云(相机图像结构)
-            // cloudPolar->resize(camera_info.width * camera_info.height); //points.size() 改成 n，并构造n个默认点
-            // cloudPolar->is_dense = false; //表明点云中可能包含无效点（如 NaN 或 Inf）
         }
     }
 
@@ -209,8 +198,6 @@ private:
     rs2_intrinsics intrinsics; // 内参
 
     pcl::PointCloud<pcl::PointXYZRGB>::Ptr cloud;
-    // pcl::PointCloud<pcl::PointXYZ>::Ptr cloudXYZ;
-    // pcl::PointCloud<PolarPoint>::Ptr cloudPolar;
     rs2::frameset frame;
 
     depth2point depth2point_gpu;
