@@ -27,10 +27,13 @@ public:
         C = cameras.size();
         offsets.push_back(offsets.back() + static_cast<size_t>(ext.width) * static_cast<size_t>(ext.height));
         world_cloud->resize(offsets.back());
+        execute.push_back(0);
     }
 
     pcl::PointCloud<PolarPoint>::Ptr getPointCloud() {
         if (C == 0) return world_cloud;
+        // 开始前清零标志位
+        std::fill_n(execute.begin(), C, 0);
 
         futures.clear();
         futures.reserve(C);
@@ -39,12 +42,26 @@ public:
             PolarPoint *dst = base + offsets[i];
             futures.emplace_back(
                 pool_.enqueue([this, i,dst]() {
-                    cameras[i]->getPolarPointCloud(dst);
+                    cameras[i]->getPolarPointCloud(dst, &this->execute[i]);
                 })
             );
         }
+        int j = 1;
         for (auto &fut: futures) {
+            auto start = std::chrono::high_resolution_clock::now();
             fut.get(); //会阻塞直到对应任务完成，并返回结果
+            auto end = std::chrono::high_resolution_clock::now();
+            std::cout << "d435-" << j << "阻塞: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).
+                    count() << " ms" << std::endl;
+            j++;
+        }
+        // 清理未更新分段，防止旧值残留
+        for (size_t i = 0; i < C; ++i) {
+            if (execute[i] == 0) {
+                PolarPoint *seg = base + offsets[i];
+                const size_t count = offsets[i + 1] - offsets[i];
+                std::fill_n(seg, count, PolarPoint{}); // 或按需填 NaN
+            }
         }
 
         return world_cloud;
@@ -60,5 +77,6 @@ private:
     size_t C{0}; // 相机数量
     // 每个相机点云在 world_cloud 中的起始偏移量
     std::vector<size_t> offsets{0};
+    std::vector<int> execute; // 标记每个相机这次是否执行了 getPolarPointCloud
 };
 #endif //D435_MULTI_RGBD_H

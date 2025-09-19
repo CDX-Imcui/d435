@@ -36,20 +36,32 @@ public:
     }
 
     // 直接将本帧的极坐标点写入外部缓冲 dst
-    void getPolarPointCloud(PolarPoint *dst) {
-        frame = pipe.wait_for_frames(); // 获取一帧
-        auto start = std::chrono::high_resolution_clock::now();
-        auto depth_frame = frame.get_depth_frame().as<rs2::depth_frame>();
+    void getPolarPointCloud(PolarPoint *dst, int *execute) {
+        // frame = pipe.wait_for_frames(); // 获取一帧
+        // auto depth_frame = frame.get_depth_frame().as<rs2::depth_frame>();
+        //
+        // const int width = depth_frame.get_width();
+        // const int height = depth_frame.get_height();
+        // // 直接取 Z16 原始深度数据 (米)
+        // const uint16_t *raw = reinterpret_cast<const uint16_t *>(depth_frame.get_data());
+        //
+        // depth2point_gpu.Depth2Polar(raw, width, height, intrinsics, depth_scale,
+        //                             this->extrinsic.T.data(), dst); // 结果直接写到 dst
 
-        const int width = depth_frame.get_width();
-        const int height = depth_frame.get_height();
-        // 直接取 Z16 原始深度数据 (米)
-        const uint16_t *raw = reinterpret_cast<const uint16_t *>(depth_frame.get_data());
-
-        depth2point_gpu.Depth2Polar(raw, width, height, intrinsics, depth_scale,
-                                    this->extrinsic.T.data(), dst); // 结果直接写到 dst
-        auto end = std::chrono::high_resolution_clock::now();
-        std::cout << "d435耗时: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << " ms" <<std::endl;
+        if (pipe.poll_for_frames(&frame)) {
+            // 立即返回true或false
+            auto depth_frame = frame.get_depth_frame().as<rs2::depth_frame>();
+            const int width = depth_frame.get_width();
+            const int height = depth_frame.get_height();
+            // 直接取 Z16 原始深度数据 (米)
+            const auto *raw = reinterpret_cast<const uint16_t *>(depth_frame.get_data());
+            depth2point_gpu.Depth2Polar(raw, width, height, intrinsics, depth_scale,
+                                        this->extrinsic.T.data(), dst); // 结果直接写到 dst
+            *execute = 1;
+        } else {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10)); // 没拿到帧
+            *execute = 0;
+        }
     }
 
     // auto *xyz = cloudXYZ->points.data();

@@ -28,9 +28,9 @@ int main() try {
     T3.block<3, 3>(0, 0) = Eigen::Quaternionf(0.7071, 0.0f, 0.0f, -0.7071f).toRotationMatrix(); //-90°
     T3.block<3, 1>(0, 3) = Eigen::Vector3f(0, 0.05, 0);
     // 外参
-    camera_extrinsic extrinsic1("239722073505", 848, 480, 90, T1),
-            extrinsic2("239722072145", 848, 480, 90, T2),// 848 x
-            extrinsic3("239722073898", 848, 480, 90,T3);
+    camera_extrinsic extrinsic1("239722073505", 640, 480, 90, T1),
+            extrinsic2("239722072145", 640, 480, 90, T2),// 848 x
+            extrinsic3("239722073898", 640, 480, 90,T3);
 
     multi_RGBD multi_rgbd;
     multi_rgbd.addCamera(extrinsic1);
