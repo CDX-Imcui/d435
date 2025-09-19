@@ -57,26 +57,17 @@ public:
         err = clEnqueueUnmapMemObject(queue_, bufDepthU16_, mapped, 0, nullptr, nullptr);
         checkCLError(err, "clEnqueueUnmapMemObject bufDepthU16");
 
-        if (!bufT_) {
-            // 确保/更新 T 常量缓冲
-            bufT_ = clCreateBuffer(context_, CL_MEM_READ_ONLY, sizeof(float) * 16, nullptr, &err);
-            checkCLError(err, "clCreateBuffer bufT");
-        }
+        //用 clEnqueueWriteBuffer 将 T_row_major 的内容写入 bufT_，同步到 GPU
         err = clEnqueueWriteBuffer(queue_, bufT_, CL_TRUE, 0, sizeof(float) * 16, T_row_major, 0, nullptr, nullptr);
         checkCLError(err, "clEnqueueWriteBuffer bufT");
 
-        if (!bufT_) {
-            bufT_ = clCreateBuffer(context_, CL_MEM_WRITE_ONLY,
-                                   sizeof(PolarPoint) * N, nullptr, &err);
-            checkCLError(err, "clCreateBuffer bufPolarOut");
-        }
         float Khost[4] = {K.fx, K.fy, K.ppx, K.ppy}; // 严格按内核形参顺序设置内核参数
         err = clSetKernelArg(kernel_, 0, sizeof(cl_mem), &bufDepthU16_);
         err |= clSetKernelArg(kernel_, 1, sizeof(int), &width);
         err |= clSetKernelArg(kernel_, 2, sizeof(int), &height);
         err |= clSetKernelArg(kernel_, 3, sizeof(Khost), &Khost);
         err |= clSetKernelArg(kernel_, 4, sizeof(float), &depth_scale);
-        err |= clSetKernelArg(kernel_, 5, sizeof(cl_mem), &bufT_);
+        err |= clSetKernelArg(kernel_, 5, sizeof(cl_mem), &bufT_);//作为内核参数，将 bufT_ 作为参数传递给 OpenCL 内核
         err |= clSetKernelArg(kernel_, 6, sizeof(cl_mem), &bufOut_);
         checkCLError(err, "clSetKernelArg z16_to_polar");
 
@@ -106,7 +97,7 @@ private:
 
     cl_mem bufDepthU16_ = nullptr; // uint16_t * capacity_
     cl_mem bufOut_ = nullptr;
-    size_t capacity_ = 0; // 已为 depth/path 分配的最大点数
+    size_t capacity_ = 0; // 已为 depth分配的最大点数
 
     cl_mem bufT_ = nullptr; // 4x4 行主序矩阵（16f）常量缓冲
     float T_row_major[16];
@@ -235,7 +226,9 @@ private:
         // 输出对齐
         bufOut_ = clCreateBuffer(context_, CL_MEM_WRITE_ONLY,
                                       sizeof(PolarPoint) * N, nullptr, &err);
-        checkCLError(err, "clCreateBuffer bufXYZOut");
+        checkCLError(err, "clCreateBuffer bufOut_");
+        bufT_ = clCreateBuffer(context_, CL_MEM_READ_ONLY, sizeof(float) * 16, nullptr, &err);
+        checkCLError(err, "clCreateBuffer bufT_");
         capacity_ = N;
     }
 

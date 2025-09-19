@@ -6,6 +6,10 @@
 #define D435_UTILS_H
 #include <librealsense2/rs.hpp>
 #include <librealsense2/rsutil.h>
+#include <iostream>
+#include <stdexcept>
+#include <opencv2/opencv.hpp>
+
 
 void devices() {
     rs2::context ctx;
@@ -27,5 +31,12 @@ void devices() {
         }
     }
 }
-
+static void savePictures(const std::string &serial, const rs2::depth_frame &depth, const rs2::video_frame &color) {
+    cv::Mat img_depth1(cv::Size(depth.get_width(), depth.get_height()),CV_16U, (void *) depth.get_data(),
+                       cv::Mat::AUTO_STEP);
+    cv::Mat img_color1(cv::Size(color.get_width(), color.get_height()),CV_8UC3, (void *) color.get_data(),
+                       cv::Mat::AUTO_STEP);
+    cv::imwrite(std::string("../") + serial + "_depth.png", img_depth1);
+    cv::imwrite(std::string("../") + serial + "_color.png", img_color1);
+}
 #endif //D435_UTILS_H

@@ -36,8 +36,9 @@ public:
     }
 
     // 直接将本帧的极坐标点写入外部缓冲 dst
-    void getPolarPointCloudInto(PolarPoint *dst) {
+    void getPolarPointCloud(PolarPoint *dst) {
         frame = pipe.wait_for_frames(); // 获取一帧
+        auto start = std::chrono::high_resolution_clock::now();
         auto depth_frame = frame.get_depth_frame().as<rs2::depth_frame>();
 
         const int width = depth_frame.get_width();
@@ -47,6 +48,8 @@ public:
 
         depth2point_gpu.Depth2Polar(raw, width, height, intrinsics, depth_scale,
                                     this->extrinsic.T.data(), dst); // 结果直接写到 dst
+        auto end = std::chrono::high_resolution_clock::now();
+        std::cout << "d435耗时: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << " ms" <<std::endl;
     }
 
     // auto *xyz = cloudXYZ->points.data();

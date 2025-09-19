@@ -11,13 +11,11 @@
 #include <pcl/common/transforms.h>
 #include <thread>
 #include <chrono>
-#include <X11/Xlib.h>
 #include "camera_extrinsic.h"
 #include "multi_RGBD.h"
 #include "utils.h"
 
 int main() try {
-    XInitThreads(); // 让 X11 支持多线程
     // devices();
     Eigen::Matrix4f T1 = Eigen::Matrix4f::Identity(); //四元数(w, x, y, z)表示任意旋转。融合点云时需要将点云旋转，与相机回正方向相反
     // 旋转轴（ux，uy，uz）是单位向量（0，0，1）右手法则 90° x=ux⋅sin(θ/2),y=uy⋅sin(θ/2),z=uz⋅sin(θ/2),w=cos(θ/2)。
@@ -27,12 +25,12 @@ int main() try {
     T2.block<3, 3>(0, 0) = Eigen::Quaternionf(1.f, 0.0f, 0.0f, 0.0f).toRotationMatrix(); //0°
     T2.block<3, 1>(0, 3) = Eigen::Vector3f(-0.05, 0, 0);
     Eigen::Matrix4f T3 = Eigen::Matrix4f::Identity();
-    T2.block<3, 3>(0, 0) = Eigen::Quaternionf(0.7071, 0.0f, 0.0f, -0.7071f).toRotationMatrix(); //-90°
-    T2.block<3, 1>(0, 3) = Eigen::Vector3f(0, 0.05, 0);
+    T3.block<3, 3>(0, 0) = Eigen::Quaternionf(0.7071, 0.0f, 0.0f, -0.7071f).toRotationMatrix(); //-90°
+    T3.block<3, 1>(0, 3) = Eigen::Vector3f(0, 0.05, 0);
     // 外参
-    camera_extrinsic extrinsic1("239722073505", 640, 480, 90, T1),
-            extrinsic2("239722072145", 640, 480, 90, T2),
-            extrinsic3("239722073898", 640, 480, 90,T3);
+    camera_extrinsic extrinsic1("239722073505", 848, 480, 90, T1),
+            extrinsic2("239722072145", 848, 480, 90, T2),// 848 x
+            extrinsic3("239722073898", 848, 480, 90,T3);
 
     multi_RGBD multi_rgbd;
     multi_rgbd.addCamera(extrinsic1);
@@ -40,19 +38,16 @@ int main() try {
     multi_rgbd.addCamera(extrinsic3);
     pcl::PointCloud<PolarPoint>::Ptr world_cloud;
 
-    std::this_thread::sleep_for(std::chrono::seconds(1)); //等待硬件初始化
-    auto start = std::chrono::high_resolution_clock::now();
+    std::this_thread::sleep_for(std::chrono::seconds(3)); //等待硬件初始化
 
+    auto start = std::chrono::high_resolution_clock::now();
     int count = 100;
     for (int i = 1; i <= count; ++i) {
-        // std::cout << "\r采集 " << i << " 次" << std::flush;
-        world_cloud = multi_rgbd.getPointCloud(0.005f);
+        world_cloud = multi_rgbd.getPointCloud();
     }
-
     auto end = std::chrono::high_resolution_clock::now();
     std::cout << "耗时: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() / static_cast<
-                double>(count) << " ms" <<
-            std::endl;
+                double>(count) << " ms" <<std::endl;
 
     // pcl::visualization::PCLVisualizer viewer("Point Cloud");
     // viewer.addPointCloud<pcl::PointXYZRGB>(world_cloud, "cloud");
