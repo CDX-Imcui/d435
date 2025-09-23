@@ -13,14 +13,17 @@
 class depth2point {
 public:
     // 可选的 platformIndex/deviceIndex 用于在多平台/多设备环境中选择目标设备
-    depth2point(unsigned platformIndex = 0, unsigned deviceIndex = 0)
+    depth2point(const unsigned platformIndex = 0, const unsigned deviceIndex = 0)
         : platformIndex_(platformIndex), deviceIndex_(deviceIndex) {
         initOpenCL();
         buildKernel();
+        bufT_ = clCreateBuffer(context_, CL_MEM_READ_ONLY, sizeof(float) * 16, nullptr, &err);
+        checkCLError(err, "clCreateBuffer bufT_");
     }
 
     ~depth2point() {
         releaseBuffers();
+        if (bufT_) clReleaseMemObject(bufT_);
         if (kernel_) clReleaseKernel(kernel_);
         if (program_) clReleaseProgram(program_);
         if (queue_) clReleaseCommandQueue(queue_);
@@ -49,42 +52,42 @@ public:
         ensureBuffers(N);
         colMajorToRowMajor4x4(T_4x4, T_row_major);
 
-        cl_int err = CL_SUCCESS; // 映射并复制深度 Z16
-        void *mapped = clEnqueueMapBuffer(queue_, bufDepthU16_, CL_TRUE, CL_MAP_WRITE, 0,
+        // 返回可写指针mapped，GPU上的bufIn_映射到主机地址空间，让CPU也能直接访问
+        void *mapped = clEnqueueMapBuffer(queue_, bufIn_, CL_TRUE, CL_MAP_WRITE, 0,
                                           sizeof(uint16_t) * N, 0, nullptr, nullptr, &err);
         checkCLError(err, "clEnqueueMapBuffer bufDepthU16");
+        // 把深度图的原始数据传输到 GPU 缓冲区对应的CPU映射内存里
         std::memcpy(mapped, depth_raw, sizeof(uint16_t) * N);
-        err = clEnqueueUnmapMemObject(queue_, bufDepthU16_, mapped, 0, nullptr, nullptr);
+        // 解除映射，并触发数据同步到 GPU。不是立刻拷贝，而是作为一个命令排到queue_里，由OpenCL在合适的时机完成
+        err = clEnqueueUnmapMemObject(queue_, bufIn_, mapped, 0, nullptr, nullptr); //解除映射
         checkCLError(err, "clEnqueueUnmapMemObject bufDepthU16");
-
         //用 clEnqueueWriteBuffer 将 T_row_major 的内容写入 bufT_，同步到 GPU
         err = clEnqueueWriteBuffer(queue_, bufT_, CL_TRUE, 0, sizeof(float) * 16, T_row_major, 0, nullptr, nullptr);
-        checkCLError(err, "clEnqueueWriteBuffer bufT");
+        checkCLError(err, "clEnqueueWriteBuffer bufT"); //小量数据用 clEnqueueWriteBuffer 更简单且足够快
 
-        float Khost[4] = {K.fx, K.fy, K.ppx, K.ppy}; // 严格按内核形参顺序设置内核参数
-        err = clSetKernelArg(kernel_, 0, sizeof(cl_mem), &bufDepthU16_);
+        const float Khost[4] = {K.fx, K.fy, K.ppx, K.ppy}; // 严格按内核形参顺序设置内核参数
+        err = clSetKernelArg(kernel_, 0, sizeof(cl_mem), &bufIn_);
         err |= clSetKernelArg(kernel_, 1, sizeof(int), &width);
         err |= clSetKernelArg(kernel_, 2, sizeof(int), &height);
         err |= clSetKernelArg(kernel_, 3, sizeof(Khost), &Khost);
         err |= clSetKernelArg(kernel_, 4, sizeof(float), &depth_scale);
-        err |= clSetKernelArg(kernel_, 5, sizeof(cl_mem), &bufT_);//作为内核参数，将 bufT_ 作为参数传递给 OpenCL 内核
+        err |= clSetKernelArg(kernel_, 5, sizeof(cl_mem), &bufT_);
         err |= clSetKernelArg(kernel_, 6, sizeof(cl_mem), &bufOut_);
         checkCLError(err, "clSetKernelArg z16_to_polar");
 
-        // 以 2D NDRange 调度（与 kernel 内 get_global_id(0/1) 匹配）
+        // 以 2D NDRange 调度，kernel内get_global_id(0/1)
         const size_t global[2] = {static_cast<size_t>(width), static_cast<size_t>(height)};
         err = clEnqueueNDRangeKernel(queue_, kernel_, 2, nullptr, global,
-                                     (preferredLocalSize_ > 0 ? &preferredLocalSize_ : nullptr), 0, nullptr, nullptr);
+                                     nullptr , 0, nullptr, nullptr);
         checkCLError(err, "clEnqueueNDRangeKernel z16_to_polar");
 
-        // 阻塞（隐式等待 kernel 完成） 读回 XYZ 16B 步长，对齐 float4 写出
+        // 阻塞等待 kernel 完成，并把结果从GPU读回CPU内存out_polar
         err = clEnqueueReadBuffer(queue_, bufOut_, CL_TRUE, 0,
                                   sizeof(PolarPoint) * N, out_polar, 0, nullptr, nullptr);
         checkCLError(err, "clEnqueueReadBuffer bufPolarOut");
     }
 
 private:
-    // OpenCL 状态
     unsigned platformIndex_;
     unsigned deviceIndex_;
     cl_platform_id platform_id_ = nullptr;
@@ -93,16 +96,16 @@ private:
     cl_command_queue queue_ = nullptr;
     cl_program program_ = nullptr;
     cl_kernel kernel_ = nullptr;
-    size_t preferredLocalSize_ = 0;
 
-    cl_mem bufDepthU16_ = nullptr; // uint16_t * capacity_
+    cl_mem bufIn_ = nullptr; // uint16_t * capacity_
     cl_mem bufOut_ = nullptr;
     size_t capacity_ = 0; // 已为 depth分配的最大点数
 
-    cl_mem bufT_ = nullptr; // 4x4 行主序矩阵（16f）常量缓冲
+    cl_mem bufT_ = nullptr; // 4x4 行主序矩阵
     float T_row_major[16];
+    cl_int err;
 
-    // 16B 对齐输出；输入为 Z16
+    // 字符串开始R"CLC(     字符串内容：out)    字符串结束：)CLC"
     const char *kernelSource_ = R"CLC(
     typedef struct { float fx, fy, ppx, ppy; } KParams;
     typedef struct { float r, theta, phi, pad; } PolarPoint;
@@ -151,8 +154,6 @@ private:
     }
     )CLC";
 
-
-    // 检查 cl 返回值（可扩展为更详细的错误信息）
     static void checkCLError(cl_int err, const char *msg) {
         if (err != CL_SUCCESS) {
             std::string s = std::string(msg) + " (cl_err=" + std::to_string(err) + ")";
@@ -161,19 +162,19 @@ private:
     }
 
     void initOpenCL() {
-        cl_int err;
         cl_uint numPlatforms = 0;
-        err = clGetPlatformIDs(0, nullptr, &numPlatforms);
+        err = clGetPlatformIDs(0, nullptr, &numPlatforms);//第一次调用时传 nullptr，查询有多少个平台：Intel/AMD/NVIDIA/OpenCL ICD
         checkCLError(err, "clGetPlatformIDs: query count");
         if (numPlatforms == 0) throw std::runtime_error("No OpenCL platforms found");
+
+        //申请一个 platforms 数组，把所有平台 ID 都拿回
         std::vector<cl_platform_id> platforms(numPlatforms);
         err = clGetPlatformIDs(numPlatforms, platforms.data(), nullptr);
         checkCLError(err, "clGetPlatformIDs: get ids");
+        if (platformIndex_ >= numPlatforms) platformIndex_ = 0;//选用的设备超出范围则用第一个
+        platform_id_ = platforms[platformIndex_];//取到目标平台 ID
 
-        if (platformIndex_ >= numPlatforms) platformIndex_ = 0;
-        platform_id_ = platforms[platformIndex_];
-
-        cl_uint numDevices = 0;
+        cl_uint numDevices = 0;     //查询平台里有多少个 GPU 设备
         err = clGetDeviceIDs(platform_id_, CL_DEVICE_TYPE_GPU, 0, nullptr, &numDevices);
         if (err != CL_SUCCESS || numDevices == 0) {
             err = clGetDeviceIDs(platform_id_, CL_DEVICE_TYPE_ALL, 0, nullptr, &numDevices);
@@ -186,20 +187,20 @@ private:
             checkCLError(err, "clGetDeviceIDs(all): get ids");
         }
         if (deviceIndex_ >= numDevices) deviceIndex_ = 0;
-        device_id_ = devices[deviceIndex_];
+        device_id_ = devices[deviceIndex_];// 拿到GPU设备id
 
         context_ = clCreateContext(nullptr, 1, &device_id_, nullptr, nullptr, &err);
         checkCLError(err, "clCreateContext");
-
         const cl_queue_properties props[] = {0};
         queue_ = clCreateCommandQueueWithProperties(context_, device_id_, props, &err);
         checkCLError(err, "clCreateCommandQueueWithProperties");
     }
 
     void buildKernel() {
-        cl_int err;
+        // 把内核源码（字符串 kernelSource_）封装成一个 cl_program
         program_ = clCreateProgramWithSource(context_, 1, &kernelSource_, nullptr, &err);
         checkCLError(err, "clCreateProgramWithSource");
+        // 在device_id设备上编译program_ 成二进制
         err = clBuildProgram(program_, 1, &device_id_, nullptr, nullptr, nullptr);
         if (err != CL_SUCCESS) {
             size_t log_size = 0;
@@ -208,36 +209,28 @@ private:
             clGetProgramBuildInfo(program_, device_id_, CL_PROGRAM_BUILD_LOG, log_size, log.data(), nullptr);
             std::cerr << "OpenCL build log:\n" << std::string(log.begin(), log.end()) << std::endl;
             checkCLError(err, "clBuildProgram");
-        }
+        }// clCreateKernel 需要在程序对象中能找到指定的内核符号（函数名），也就是需要程序已经被编译/链接成功，才能创建一个有效的kernel对象
         kernel_ = clCreateKernel(program_, "z16_to_polar", &err);
         checkCLError(err, "clCreateKernel");
     }
 
-
+    //确保 OpenCL 输入bufIn_输出bufOut_缓冲区的容量足够容纳 N 个点的数据
     void ensureBuffers(size_t N) {
-        //确保 OpenCL 输入输出缓冲区（bufIn_ 和 bufOut_）的容量足够容纳 N 个点的数据
         if (N <= capacity_) return;
         releaseBuffers();
-        cl_int err;
-        // 输入对齐：Z16，分配可映射的页锁内存
-        bufDepthU16_ = clCreateBuffer(context_, CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR,
-                                      sizeof(uint16_t) * N, nullptr, &err);
+        bufIn_ = clCreateBuffer(context_, CL_MEM_READ_ONLY | CL_MEM_ALLOC_HOST_PTR,
+                                sizeof(uint16_t) * N, nullptr, &err); // 输入对齐：Z16，分配可映射的页锁内存
         checkCLError(err, "clCreateBuffer bufDepthU16");
-        // 输出对齐
-        bufOut_ = clCreateBuffer(context_, CL_MEM_WRITE_ONLY,
-                                      sizeof(PolarPoint) * N, nullptr, &err);
+        bufOut_ = clCreateBuffer(context_, CL_MEM_WRITE_ONLY, sizeof(PolarPoint) * N, nullptr, &err); // 输出对齐
         checkCLError(err, "clCreateBuffer bufOut_");
-        bufT_ = clCreateBuffer(context_, CL_MEM_READ_ONLY, sizeof(float) * 16, nullptr, &err);
-        checkCLError(err, "clCreateBuffer bufT_");
         capacity_ = N;
     }
 
+    //释放原有缓冲区
     void releaseBuffers() {
-        //释放原有缓冲区
-        if (bufDepthU16_) clReleaseMemObject(bufDepthU16_);
+        if (bufIn_) clReleaseMemObject(bufIn_);
         if (bufOut_) clReleaseMemObject(bufOut_);
-        if (bufT_) clReleaseMemObject(bufT_);
-        bufDepthU16_ = bufOut_ = nullptr;
+        bufIn_ = bufOut_ = nullptr;
         capacity_ = 0;
     }
 };
