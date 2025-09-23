@@ -36,7 +36,7 @@ public:
     }
 
     // 直接将本帧的极坐标点写入外部缓冲 dst
-    void getPolarPointCloud(PolarPoint *dst, int *execute) {
+    void getPolarPointCloud(PolarPoint *dst) {
         // frame = pipe.wait_for_frames(); // 获取一帧
         // auto depth_frame = frame.get_depth_frame().as<rs2::depth_frame>();
         //
@@ -47,13 +47,13 @@ public:
         //
         // depth2point_gpu.Depth2Polar(raw, width, height, intrinsics, depth_scale,
         //                             this->extrinsic.T.data(), dst); // 结果直接写到 dst
-        if (!poll_for_frames_pointcloud(dst, execute)) {
+        if (!poll_for_frames_pointcloud(dst)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10)); // 没拿到帧最多再等10s
-            poll_for_frames_pointcloud(dst, execute);// 10s后再尝试一次
+            poll_for_frames_pointcloud(dst);// 10s后再尝试一次
         }
     }
 
-    bool poll_for_frames_pointcloud(PolarPoint *dst, int *execute) {
+    bool poll_for_frames_pointcloud(PolarPoint *dst) {
         if (pipe.poll_for_frames(&frame)) {
             // 立即返回true或false
             auto depth_frame = frame.get_depth_frame().as<rs2::depth_frame>();
@@ -63,10 +63,8 @@ public:
             const auto *raw = reinterpret_cast<const uint16_t *>(depth_frame.get_data());
             depth2point_gpu.Depth2Polar(raw, width, height, intrinsics, depth_scale,
                                         this->extrinsic.T.data(), dst); // 结果直接写到 dst
-            *execute = 1;
             return true;
         }
-        *execute = 0;
         return false;
     }
 
