@@ -51,8 +51,7 @@ public:
             auto start = std::chrono::high_resolution_clock::now();
             fut.get(); //会阻塞直到对应任务完成，并返回结果
             auto end = std::chrono::high_resolution_clock::now();
-            std::cout << "d435-" << j << "阻塞: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).
-                    count() << " ms" << std::endl;
+            std::cout << "d435-" << j << "阻塞: " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << " ms" << std::endl;
             j++;
         }
         // 清理未更新分段，防止旧值残留
@@ -60,7 +59,7 @@ public:
             if (execute[i] == 0) {
                 PolarPoint *seg = base + offsets[i];
                 const size_t count = offsets[i + 1] - offsets[i];
-                std::fill_n(seg, count, PolarPoint{}); // 或按需填 NaN
+                std::fill_n(seg, count, PolarPoint{});
             }
         }
 

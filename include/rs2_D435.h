@@ -47,7 +47,13 @@ public:
         //
         // depth2point_gpu.Depth2Polar(raw, width, height, intrinsics, depth_scale,
         //                             this->extrinsic.T.data(), dst); // 结果直接写到 dst
+        if (!poll_for_frames_pointcloud(dst, execute)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10)); // 没拿到帧最多再等10s
+            poll_for_frames_pointcloud(dst, execute);// 10s后再尝试一次
+        }
+    }
 
+    bool poll_for_frames_pointcloud(PolarPoint *dst, int *execute) {
         if (pipe.poll_for_frames(&frame)) {
             // 立即返回true或false
             auto depth_frame = frame.get_depth_frame().as<rs2::depth_frame>();
@@ -58,10 +64,10 @@ public:
             depth2point_gpu.Depth2Polar(raw, width, height, intrinsics, depth_scale,
                                         this->extrinsic.T.data(), dst); // 结果直接写到 dst
             *execute = 1;
-        } else {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10)); // 没拿到帧
-            *execute = 0;
+            return true;
         }
+        *execute = 0;
+        return false;
     }
 
     // auto *xyz = cloudXYZ->points.data();
